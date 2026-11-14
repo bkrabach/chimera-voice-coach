@@ -1,7 +1,8 @@
-# CHIMERA
+# CHIMERA Voice Coach
 
 A physical-modeling voice synthesizer: a Rust engine (wasm in an AudioWorklet, native for tests
-and the CLI) under a React UI. See the README.
+and the CLI) under a React UI. This is a fork of jamesondh/chimera-vocal-synth (remote `upstream`,
+never pushed to) that adds Coach and Analyze for a singer. See the README.
 
 ## Working here
 
@@ -24,6 +25,12 @@ and the CLI) under a React UI. See the README.
   `crates/chimera-cli/`: `chimera render | compare csd | compare tsp | diagnose | calibrate`.
 - `src/wasm/`: the UI's facade over the engine. `src/worklet/`: the AudioWorklet. `src/ui/`: React
   and the canvas renderers. `src/song/`: Sing's tunes, fitting words to them, clip recording.
+- `src/coach/`: the lessons (`lessons.ts`: words and engine settings), the demo player, the
+  callouts drawn on the head, the microphone (`mic.ts`: the singer's live voice; `compare.ts`:
+  a go beside a take). `src/analyze/`: a recording → what was sung (`dsp.ts` pitch and
+  harmonics, `codebook.ts` the shapes matched against, `analyze.ts` the match, `interpret.ts` the
+  0..1 scales, `store.ts` playback and driving the engine, `worker.ts`). `tools/separate/`: the
+  vocal isolator (Demucs) and the dev server's `/api/separate`.
 - `tests/`: bun tests on the wasm build. `tools/`: e2e, layout lint, spectrogram, speech judges
   (`asr/` Whisper, `tsp/` the real speakers' data).
 - `docs/`: architecture, the engine contract (`rust-engine.md`), the UI look, the singer and
@@ -53,6 +60,19 @@ and the CLI) under a React UI. See the README.
 - **Nothing copyrighted goes in git.** `public/shows/` is gitignored; never ship CSD audio or
   anything derived from it.
 - **Voice tuning follows `docs/hill-climb/README.md`** and never edits its judges.
+- **A lesson's take must do what its words say.** Its numbers were chosen by rendering and
+  measuring it; after changing one, `bun tools/analyze-calibrate.ts` and `bun test tests/coach.test.ts`.
+- **Analyze's scales (`src/analyze/interpret.ts`) are calibrated on the engine's own singing,**
+  not yet on real recordings: say so wherever a number is shown as fact. After touching
+  `src/analyze/`, `bun test tests/analyze.test.ts` and read the table from `bun tools/analyze-calibrate.ts`.
+- **A measurement must survive a moving pitch.** Vibrato read as grit until each window was
+  re-timed to a steady pitch (`HarmonicAnalyser.steady`); the test's vibrato case keeps it so.
+- **The microphone must never hear the speakers as the singer.** It waits while a take sings and
+  just after, and the engine it drives is muted. A change to the player's timing or to `mic.ts`
+  is checked with a fake microphone (docs/voice-coach.md says how) and `bun test tests/compare.test.ts`.
+- **This machine's Node is too old for Vite 8:** the scripts run Vite and tsc under Bun
+  (`bunx --bun`). `tools/layout-lint.ts` takes `CHIMERA_CHROME=<path to a Chromium>` when
+  Playwright's own revision is not installed.
 
 ## Checks
 
@@ -62,3 +82,4 @@ and the CLI) under a React UI. See the README.
 | `crates/chimera/` sound | re-bless goldens (above); `cargo run --release -q -p chimera --example bench` against the previous commit |
 | `crates/chimera-wasm/`, `src/wasm/`, `src/worklet/`, `src/main.tsx` | `bun run build && bun run preview`, then `bun tools/e2e.ts` |
 | `src/ui/`, `src/show/`, CSS | `bun run lint:layout` |
+| `src/coach/`, `src/analyze/` | `bun test tests/coach.test.ts tests/analyze.test.ts tests/compare.test.ts`; `bun tools/layout-lint.ts --mode coach` and `--mode analyze` |
