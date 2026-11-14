@@ -3,6 +3,7 @@
  * where the singer feels the vibration, and readouts chosen for the lesson.
  */
 import type { InfoFn, OverlayFn, SlotsFn } from "../ui/components/AnatomyView.tsx";
+import type { FaceView } from "../ui/render/anatomy.ts";
 import { nearestVowel } from "../ui/components/AnatomyView.tsx";
 import { noteName } from "../ui/components/VoiceControls.tsx";
 import { jawFn } from "../ui/render/profile.ts";
@@ -14,6 +15,7 @@ import type { VoiceModel } from "../ui/analysis.ts";
 import type { HumanArtic, HumanFrame } from "../wasm/types.ts";
 import type { TelemetryMessage } from "../worklet/protocol.ts";
 import { activeParts, activeZones, currentTake, useCoach } from "./player.ts";
+import { useMic } from "./mic.ts";
 import type { PartId, ZoneId } from "./types.ts";
 
 interface Vec {
@@ -43,6 +45,8 @@ interface PartSpec {
   /** where its label sits, from the part (cm; +x toward the face, +y up) */
   dx: number;
   dy: number;
+  /** or a fixed place for the label (cm, adult male template): for parts that move a long way */
+  fixed?: [number, number];
   align: "left" | "right";
   /** marker radius (cm) */
   r: number;
@@ -58,10 +62,10 @@ const PARTS: Record<PartId, PartSpec> = {
   throat: { name: "Throat space", at: (m, f) => midAt(f, 5.2 * m.tract.scale), dx: -1.7, dy: 0.3, align: "right", r: 0.6, color: V.blue },
   softPalate: { name: "Soft palate", at: (_m, f) => f.velum[Math.floor(f.velum.length * 0.45)], dx: -1.6, dy: 1.3, align: "right", r: 0.55, color: V.white },
   nose: { name: "Nose", at: (_m, f) => f.nasalCavity[Math.floor(f.nasalCavity.length * 0.55)], dx: 1.3, dy: 1.5, align: "left", r: 0.6, color: V.white },
-  tongue: { name: "Tongue", at: (_m, f) => ({ x: f.tongueCenter.x + 0.35 * f.tongueRadius, y: f.tongueCenter.y + 0.75 * f.tongueRadius }), dx: 3.6, dy: -4.6, align: "left", r: 0.45, color: V.green },
+  tongue: { name: "Tongue", at: (_m, f) => ({ x: f.tongueCenter.x + 0.35 * f.tongueRadius, y: f.tongueCenter.y + 0.75 * f.tongueRadius }), dx: 0, dy: 0, fixed: [4.3, 2.95], align: "left", r: 0.45, color: V.green },
   tongueRoot: { name: "Tongue root", at: (_m, f) => ({ x: f.tongueCenter.x - 0.8 * f.tongueRadius, y: f.tongueCenter.y - 0.45 * f.tongueRadius }), dx: -1.9, dy: -0.9, align: "right", r: 0.5, color: V.green },
-  jaw: { name: "Jaw", at: (m, _f, a) => jawFn(m, a)(7.5, 4.9), dx: 1.0, dy: -0.7, align: "left", r: 0.45, color: V.red },
-  lips: { name: "Lips", at: (_m, f) => ({ x: (f.upperLip[6].x + f.lowerLip[6].x) / 2 + 0.15, y: (f.upperLip[6].y + f.lowerLip[6].y) / 2 }), dx: 1.5, dy: 0.2, align: "left", r: 0.55, color: V.pink },
+  jaw: { name: "Jaw", at: (m, _f, a) => jawFn(m, a)(7.5, 4.9), dx: 0, dy: 0, fixed: [8.6, 4.2], align: "left", r: 0.45, color: V.red },
+  lips: { name: "Lips", at: (_m, f) => ({ x: (f.upperLip[6].x + f.lowerLip[6].x) / 2 + 0.15, y: (f.upperLip[6].y + f.lowerLip[6].y) / 2 }), dx: 0, dy: 0, fixed: [8.7, 7.3], align: "left", r: 0.55, color: V.pink },
 };
 
 interface ZoneSpec {
@@ -88,7 +92,9 @@ const ZONES: Record<ZoneId, ZoneSpec> = {
 /** a small caption with a dark plate behind it, so it reads over the anatomy's lines */
 function tag(ctx: CanvasRenderingContext2D, text: string, x: number, y: number, color: string, align: "left" | "right" | "center", size = 12.5): { x0: number; x1: number } {
   const w = labelWidth(ctx, text, { size, ls: 0.16, weight: "m" });
-  const x0 = align === "left" ? x : align === "right" ? x - w : x - w / 2;
+  // kept on the canvas (a phone's is narrow): the context is scaled by the device pixel ratio
+  const cssW = ctx.canvas.width / (ctx.getTransform().a || 1);
+  const x0 = Math.max(6, Math.min(cssW - w - 6, align === "left" ? x : align === "right" ? x - w : x - w / 2));
   ctx.save();
   ctx.globalCompositeOperation = "source-over";
   ctx.fillStyle = "rgba(0, 0, 0, 0.78)";
@@ -100,16 +106,17 @@ function tag(ctx: CanvasRenderingContext2D, text: string, x: number, y: number, 
 
 let clock = 0;
 
-/** Coach's overlay on the 2D head. */
-export const coachOverlay: OverlayFn = (ctx, r, m, f, a, size) => {
-  clock += size.dt;
+/**
+ * Markers on the head: a soft glow in each zone (where the vibration is felt), and a ring, a
+ * leader and a name on each part. `live` makes them breathe (a take or a recording is sounding).
+ */
+export function drawCallouts(ctx: CanvasRenderingContext2D, r: FaceView, m: VoiceModel, f: HumanFrame, a: HumanArtic, dt: number, parts: readonly PartId[], zones: readonly ZoneId[], live: boolean): void {
+  clock += dt;
   const k = m.tract.scale;
   const px = r.pxPerCm;
-  const playing = useCoach.getState().playing !== null;
   const pulse = 0.5 + 0.5 * Math.sin(clock * 4.2);
 
-  // where it is felt: a soft amber glow that breathes while the take sounds
-  for (const id of activeZones()) {
+  for (const id of zones) {
     const z = ZONES[id];
     const cx = r.X({ x: z.x * k, y: 0 }), cy = r.Y({ x: 0, y: z.y * k });
     const rx = z.rx * k * px, ry = z.ry * k * px;
@@ -118,7 +125,7 @@ export const coachOverlay: OverlayFn = (ctx, r, m, f, a, size) => {
     ctx.translate(cx, cy);
     ctx.scale(1, ry / rx);
     const g = ctx.createRadialGradient(0, 0, 0, 0, 0, rx);
-    const peak = playing ? 0.2 + 0.14 * pulse : 0.13;
+    const peak = live ? 0.2 + 0.14 * pulse : 0.13;
     g.addColorStop(0, `rgba(255, 179, 64, ${peak})`);
     g.addColorStop(0.6, `rgba(255, 179, 64, ${peak * 0.45})`);
     g.addColorStop(1, "rgba(255, 179, 64, 0)");
@@ -131,21 +138,47 @@ export const coachOverlay: OverlayFn = (ctx, r, m, f, a, size) => {
     tag(ctx, z.name.toUpperCase(), lx, ly, V.amber, z.align, 11.5);
   }
 
-  // the parts the take is about
-  for (const id of activeParts()) {
+  for (const id of parts) {
     const p = PARTS[id];
     const pos = p.at(m, f, a);
     const x = r.X(pos), y = r.Y(pos);
     const rad = p.r * k * px;
     ring(ctx, x, y, rad, p.color, 2, { hot: true, alpha: 0.95 });
-    ring(ctx, x, y, rad + 4 + 3 * pulse, p.color, 1, { alpha: playing ? 0.25 + 0.3 * pulse : 0.3 });
-    const lx = x + p.dx * k * px, ly = y - p.dy * k * px;
+    ring(ctx, x, y, rad + 4 + 3 * pulse, p.color, 1, { alpha: live ? 0.25 + 0.3 * pulse : 0.3 });
+    const lx = p.fixed ? r.X({ x: p.fixed[0] * k, y: 0 }) : x + p.dx * k * px;
+    const ly = p.fixed ? r.Y({ x: 0, y: p.fixed[1] * k }) : y - p.dy * k * px;
     const box = tag(ctx, p.name.toUpperCase(), lx, ly, p.color, p.align);
     // leader from the label's near end to the rim of the marker
     const ex = p.align === "left" ? box.x0 : box.x1, ey = ly - 4;
     const d = Math.hypot(ex - x, ey - y) || 1;
     seg(ctx, x + ((ex - x) / d) * rad, y + ((ey - y) / d) * rad, ex, ey, p.color, 1.2, { alpha: 0.85 });
   }
+}
+
+/** A caption in front of the lips (what is being sung now). */
+export function mouthCaption(ctx: CanvasRenderingContext2D, r: FaceView, f: HumanFrame, k: number, lines: { text: string; color: string; size: number }[]): void {
+  const x = r.X({ x: Math.max(f.upperLip[6].x, f.lowerLip[6].x) + 1.1 * k, y: 0 });
+  let y = r.Y({ x: 0, y: (f.upperLip[6].y + f.lowerLip[6].y) / 2 }) + 4;
+  for (const l of lines) {
+    label(ctx, l.text, x, y, { size: l.size, color: l.color, ls: 0.1, weight: "m" });
+    y += l.size * 1.35;
+  }
+}
+
+/** Coach's overlay on the 2D head. With the microphone on and the take silent, the head is the singer's: it says so. */
+export const coachOverlay: OverlayFn = (ctx, r, m, f, a, size) => {
+  const playing = useCoach.getState().playing !== null;
+  const mic = useMic.getState();
+  const yours = mic.status === "on" && !playing;
+  drawCallouts(ctx, r, m, f, a, size.dt, activeParts(), activeZones(), playing || (yours && mic.hearing));
+  if (!yours) return;
+  const live = mic.live;
+  const lines = [{ text: "YOU", color: V.white, size: 11 }];
+  if (live?.voiced) {
+    lines.push({ text: live.vowel || "–", color: V.green, size: 22 });
+    lines.push({ text: noteName(live.hz), color: V.amber, size: 15 });
+  }
+  mouthCaption(ctx, r, f, m.tract.scale, lines);
 };
 
 const signedCm = (v: number) => `${v >= 0 ? "+" : ""}${v.toFixed(1)}`;

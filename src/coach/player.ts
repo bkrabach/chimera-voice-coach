@@ -8,20 +8,25 @@ import { useStore } from "../ui/store.ts";
 import { getModel } from "../ui/useModel.ts";
 import { nearestBody } from "../ui/body.ts";
 import { DEFAULT_SOURCE, type VoiceSource } from "../wasm/engine.ts";
-import { BASE_SOURCE, LESSONS, lessonById, patternSteps, REGISTER } from "./lessons.ts";
+import { BASE_SOURCE, HOME, LESSONS, lessonById, midiHz, patternSteps, REGISTER } from "./lessons.ts";
 import { mergeShape, resolveShape } from "./shape.ts";
 import type { Lesson, PartId, Take, ZoneId } from "./types.ts";
 
-/** The voice's home note (MIDI): a comfortable low-middle note for each body. */
-const HOME = { male: 52, female: 57, child: 62 } as const;
+export { midiHz };
 
-export const midiHz = (m: number) => 440 * Math.pow(2, (m - 69) / 12);
+/**
+ * Coach's microphone hangs these on the player while it is on: a take about to sing takes the
+ * engine back from it, and between takes (in a loop or a tour) it waits for the singer's go.
+ */
+export const hooks: { beforeTake?: () => void; afterTake?: () => Promise<boolean> } = {};
 
 interface CoachState {
   lessonId: string;
   takeId: string;
   /** the take sounding now, or null */
   playing: string | null;
+  /** a loop is running, though no take sounds at the moment (the singer's go, or the breath between) */
+  between: boolean;
   loop: boolean;
   /** playing every take of the lesson in turn */
   tour: boolean;
@@ -86,6 +91,7 @@ async function sing(lesson: Lesson, take: Take, my: number): Promise<void> {
   const st = useStore.getState();
   const m = getModel(st.body, engine.sampleRate);
   const note = takeNote(lesson, take);
+  hooks.beforeTake?.();
   engine.stopSpeech();
   // the first pitch is set before the breath opens, so the note does not slide in from the last one
   st.setArtic(resolveShape(m, lesson.vowel, take.shape), true);
@@ -122,6 +128,7 @@ export const useCoach = create<CoachState>((set, get) => ({
   lessonId: LESSONS[0].id,
   takeId: (LESSONS[0].takes.find((t) => t.kind === "aim") ?? LESSONS[0].takes[0]).id,
   playing: null,
+  between: false,
   loop: false,
   tour: false,
   key: savedKey(),
@@ -138,14 +145,22 @@ export const useCoach = create<CoachState>((set, get) => ({
     clearTimers();
     engine.gate(0);
     const my = ++serial;
-    set({ takeId: take.id, playing: take.id, tour: false });
+    set({ takeId: take.id, playing: take.id, tour: false, between: false });
     void (async () => {
-      do {
+      for (;;) {
+        set({ playing: take.id, between: false });
         await sing(l, take, my);
         if (my !== serial) return;
-        if (get().loop) await new Promise((r) => timers.push(setTimeout(r, 500)));
-      } while (my === serial && get().loop);
-      if (my === serial) set({ playing: null });
+        if (!get().loop) break;
+        // between the takes: the singer's go if the microphone is on, else a breath
+        set({ playing: null, between: true });
+        const sang = hooks.afterTake ? await hooks.afterTake() : false;
+        if (my !== serial) return;
+        await new Promise((r) => timers.push(setTimeout(r, sang ? 700 : 500)));
+        if (my !== serial) return;
+        if (!get().loop) break;
+      }
+      set({ playing: null, between: false });
     })();
   },
   playAll: () => {
@@ -153,14 +168,18 @@ export const useCoach = create<CoachState>((set, get) => ({
     clearTimers();
     engine.gate(0);
     const my = ++serial;
-    set({ tour: true });
+    set({ tour: true, between: false });
     void (async () => {
       for (const take of l.takes) {
         if (my !== serial) return;
         set({ takeId: take.id, playing: take.id });
         await sing(l, take, my);
         if (my !== serial) return;
-        await new Promise((r) => timers.push(setTimeout(r, 450)));
+        // with the microphone on, each take is answered before the next
+        set({ playing: null });
+        const sang = hooks.afterTake ? await hooks.afterTake() : false;
+        if (my !== serial) return;
+        await new Promise((r) => timers.push(setTimeout(r, sang ? 700 : 450)));
       }
       if (my === serial) set({ playing: null, tour: false });
     })();
@@ -169,7 +188,7 @@ export const useCoach = create<CoachState>((set, get) => ({
     serial++;
     clearTimers();
     engine.gate(0);
-    if (get().playing || get().tour) set({ playing: null, tour: false });
+    if (get().playing || get().tour || get().between) set({ playing: null, tour: false, between: false });
   },
   setLoop: (on) => set({ loop: on }),
   setKey: (semis) => {

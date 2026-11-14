@@ -25,7 +25,7 @@
  *  - label(..., { moving: true }) on canvas text in flight (a word flying off the lips)
  *  Text truncated with an ellipsis or a line clamp is reported as a warning, not an error.
  *
- * Usage: bun tools/layout-lint.ts [--url http://...] [--out out/layout] [--only 1440x900] [--mode play|duet]
+ * Usage: bun tools/layout-lint.ts [--url http://...] [--out out/layout] [--only 1440x900] [--mode coach|analyze|play|…|duet]
  * Without --url it starts its own Vite dev server (build the wasm first: bun run wasm).
  * Screenshots of every failing view are saved under --out.
  */
@@ -48,7 +48,7 @@ export const VIEWPORTS: { w: number; h: number }[] = [
   { w: 1920, h: 1080 },
   { w: 2560, h: 1440 },
 ];
-const MODES = ["play", "speak", "sing", "bestiary", "beatbox"] as const;
+const MODES = ["coach", "analyze", "play", "speak", "sing", "bestiary", "beatbox"] as const;
 
 interface Problem {
   kind: string;
@@ -280,7 +280,8 @@ async function main() {
   // WebGL for the 3D face: the GPU through Metal on a Mac; elsewhere SwiftShader, which draws on the
   // CPU (it took 6-15x the CPU time on an M4 for the same report, enough to stall the machine)
   const gl = process.platform === "darwin" ? ["--use-angle=metal", "--ignore-gpu-blocklist"] : ["--use-angle=swiftshader", "--enable-unsafe-swiftshader"];
-  const browser = await chromium.launch({ headless: true, args: ["--autoplay-policy=no-user-gesture-required", ...gl] });
+  // CHIMERA_CHROME: a Chromium already on this machine, when Playwright's own revision is not installed
+  const browser = await chromium.launch({ headless: true, executablePath: process.env.CHIMERA_CHROME || undefined, args: ["--autoplay-policy=no-user-gesture-required", "--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream", ...gl] });
   let errors = 0, warnings = 0, views = 0;
   for (const { w, h } of viewports) {
     const page = await browser.newPage({ viewport: { width: w, height: h }, deviceScaleFactor: 1 });
@@ -340,6 +341,30 @@ async function main() {
       await mode(m);
       await check(`${m} (running)`);
       await pages(`${m} (running)`);
+      if (m === "coach") {
+        // every lesson has its own takes, text and callouts on the head
+        const lessons = page.locator(".coach-lesson");
+        for (let i = 1; i < (await lessons.count()); i++) {
+          await lessons.nth(i).click();
+          await check(`coach, lesson ${(await lessons.nth(i).textContent())?.trim()}`);
+        }
+        await lessons.first().click();
+        // the microphone on (the browser's fake one): the singer beside the take, over the lesson's text
+        const mic = page.locator(".action-bar .chip", { hasText: /^Mic/ });
+        await mic.click();
+        await page.waitForSelector(".you-meter", { timeout: 15000 });
+        await check("coach, microphone on", 7000);
+        await mic.click();
+      }
+      if (m === "analyze") {
+        // the demo: a recording analysed, its lanes and the readouts at the playhead
+        await page.getByRole("button", { name: /^Or try the demo$/ }).click();
+        await page.waitForSelector(".timeline", { timeout: 90000 });
+        await check("analyze, demo");
+        await page.getByRole("button", { name: /^Play$/ }).click();
+        await check("analyze, demo playing", 2500);
+        await page.getByRole("button", { name: /^Stop$/ }).click();
+      }
       if (m === "play") {
         // the 3D face lays its readouts out on its own
         await page.locator(".view-toggles .toggle", { hasText: "3D" }).click();

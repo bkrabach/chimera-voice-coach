@@ -5,13 +5,14 @@
   "license": "MIT",
   "type": "module",
   "scripts": {
-    "dev": "bun run wasm && vite --host 127.0.0.1",
-    "build": "bun run wasm && tsc --noEmit && vite build",
-    "preview": "vite preview --host 127.0.0.1",
+    "dev": "bun run wasm && bunx --bun vite --host 127.0.0.1",
+    "build": "bun run wasm && bunx --bun tsc --noEmit && bunx --bun vite build",
+    "preview": "bunx --bun vite preview --host 127.0.0.1",
     "test": "bun run wasm && cargo test --workspace && bun test tests",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "bunx --bun tsc --noEmit",
     "lint:layout": "bun run wasm && bun tools/layout-lint.ts",
-    "wasm": "cargo build -p chimera-wasm --release --target wasm32-unknown-unknown && cp target/wasm32-unknown-unknown/release/chimera_wasm.wasm src/wasm/chimera.wasm"
+    "wasm": "cargo build -p chimera-wasm --release --target wasm32-unknown-unknown && cp target/wasm32-unknown-unknown/release/chimera_wasm.wasm src/wasm/chimera.wasm",
+    "setup:separate": "uv venv tools/separate/.venv --python 3.12 && uv pip install --python tools/separate/.venv/bin/python -r tools/separate/requirements.txt"
   },
   "dependencies": {
     "react": "19.3.1",

@@ -86,7 +86,8 @@ export function Stroboscope() {
       let opened = 0;
       for (let i = 0; i < n; i++) if (area[i] > minA + 0.002) opened++;
       label(ctx, `OPEN ${Math.round((opened / n) * 100)}%`, tx0, h - 4, { size: 9, color: TEXT.secondary, ls: 0.16 });
-      label(ctx, `${(a * 100).toFixed(1)} MM²`, tx1, h - 4, { size: 9, color: TEXT.secondary, align: "right", ls: 0.12 });
+      // (a narrow screen has room for one of the two)
+      if (tx1 - tx0 > 130) label(ctx, `${(a * 100).toFixed(1)} MM²`, tx1, h - 4, { size: 9, color: TEXT.secondary, align: "right", ls: 0.12 });
     } else {
       // in the area band, clear of the FLOW label below it
       labelBlock(ctx, "MAKE A SOUND TO SEE THEM VIBRATE", tx0, (yA0 + yA1) / 2, tx1 - tx0, { size: 9, color: TEXT.secondary, ls: 0.16 });

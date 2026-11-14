@@ -12,6 +12,8 @@ mkdirSync(outDir, { recursive: true });
 
 const browser = await chromium.launch({
   headless: true,
+  // a Chromium already on this machine, when Playwright's own revision is not installed
+  executablePath: process.env.CHIMERA_CHROME || undefined,
   args: ["--autoplay-policy=no-user-gesture-required", "--use-fake-ui-for-media-stream"],
 });
 const errors: string[] = [];
@@ -27,7 +29,7 @@ async function run(viewport: { width: number; height: number }, tag: string) {
   await page.goto(url, { waitUntil: "networkidle" });
   await page.waitForTimeout(400);
   await page.screenshot({ path: `${outDir}/${tag}-0-idle.png` });
-  // the app opens on Sing; this run starts in Play
+  // the app opens on Coach; this run starts in Play
   await page.getByRole("radio", { name: "Play" }).click();
   if (tag === "desktop") await grabTongueFirst(page, tag);
   else {
@@ -354,6 +356,7 @@ async function run(viewport: { width: number; height: number }, tag: string) {
   page.on("console", (m) => m.type() === "error" && errors.push(`[video] ${m.text()}`));
   page.on("pageerror", (e) => errors.push(`[video] pageerror: ${e.message}`));
   await page.goto(url, { waitUntil: "networkidle" });
+  await page.getByRole("radio", { name: "Sing" }).click();
   await page.locator(".lyrics textarea").fill("one two three");
   await page.getByRole("combobox", { name: "Tune" }).selectOption({ label: "Playful" });
   await page.getByRole("button", { name: /^Record video$/ }).click();
@@ -371,6 +374,7 @@ async function run(viewport: { width: number; height: number }, tag: string) {
   }
   // the words and the tune come back on reload
   await page.reload({ waitUntil: "networkidle" });
+  await page.getByRole("radio", { name: "Sing" }).click();
   const words = await page.locator(".lyrics textarea").inputValue();
   const tune = await page.getByRole("combobox", { name: "Tune" }).inputValue();
   if (words !== "one two three" || tune !== "playful") errors.push(`[video] the song didn't come back on reload: "${words}" to ${tune}`);
@@ -394,6 +398,7 @@ async function run(viewport: { width: number; height: number }, tag: string) {
     };
   });
   await page.goto(url, { waitUntil: "networkidle" });
+  await page.getByRole("radio", { name: "Sing" }).click();
   await page.locator(".lyrics textarea").fill("one two");
   // both taps land before the first has started the audio (a second Playwright click would wait,
   // and then find Cancel)
@@ -424,6 +429,7 @@ async function run(viewport: { width: number; height: number }, tag: string) {
     };
   });
   await page.goto(url, { waitUntil: "networkidle" });
+  await page.getByRole("radio", { name: "Sing" }).click();
   await page.locator(".lyrics textarea").fill("one two three four five six seven eight");
   await page.getByRole("button", { name: /^Sing$/ }).click();
   await page.waitForTimeout(2500);
@@ -465,6 +471,7 @@ async function run(viewport: { width: number; height: number }, tag: string) {
     };
   });
   await page.goto(url, { waitUntil: "networkidle" });
+  await page.getByRole("radio", { name: "Sing" }).click();
   await page.locator(".lyrics textarea").fill("one two three four five six seven eight nine ten");
   await page.getByRole("button", { name: /^Record video$/ }).click();
   await page.getByRole("button", { name: /^Cancel$/ }).waitFor({ timeout: 10000 });
@@ -503,6 +510,7 @@ async function run(viewport: { width: number; height: number }, tag: string) {
     } as typeof CanvasRenderingContext2D.prototype.drawImage;
   });
   await page.goto(url, { waitUntil: "networkidle" });
+  await page.getByRole("radio", { name: "Sing" }).click();
   await page.locator(".lyrics textarea").fill("one two three four five six seven eight nine ten");
   await page.getByRole("button", { name: /^Record video$/ }).click();
   await page.getByRole("button", { name: /^Cancel$/ }).waitFor({ timeout: 10000 });
@@ -538,6 +546,7 @@ async function run(viewport: { width: number; height: number }, tag: string) {
     };
   });
   await page.goto(url, { waitUntil: "networkidle" });
+  await page.getByRole("radio", { name: "Sing" }).click();
   await page.getByRole("button", { name: /^Record video$/ }).click();
   await page.waitForTimeout(2500);
   await page.evaluate(() => ((window as unknown as { __texts: string[] }).__texts = []));

@@ -527,7 +527,7 @@ impl HumanVoice {
         // pitch glide
         let g = js_max(0.002, if self.score_f0.is_some() { 0.03 } else { self.source.glide });
         self.f0 *= pow(f0_target / self.f0, 1.0 - exp(-dt / g));
-        self.glottis.params.f0 = self.f0;
+        self.glottis.params.f0 = self.f0 * self.distortion_pitch();
         // smoothed mean flow per tract node (for particle speeds)
         let a = 1.0 - exp(-dt / 0.03);
         let n_ph = self.airway.n_ph;
@@ -536,6 +536,14 @@ impl HumanVoice {
             self.flow_sm[k] += a * (self.airway.net.u[br] - self.flow_sm[k]);
             crate::airway::network::tiny(&mut self.flow_sm[k]);
         }
+    }
+
+    /// The irregular cycles of a distorted voice are longer on average (the logistic map behind
+    /// `chaos` sits near 0.65, not 0.5, and stretches the period by 0.45·chaos·0.15), which sang
+    /// 40 to 60 cents flat. The folds are asked for that much more, so the note stays in tune.
+    /// Exactly 1 with no distortion.
+    fn distortion_pitch(&self) -> f64 {
+        1.0 + 0.0675 * clamp(self.source.distortion, 0.0, 1.0)
     }
 
     /// Contact constraint: articulators cannot travel into the palate. Beyond `max_penetration` of
@@ -630,7 +638,7 @@ impl HumanVoice {
         out.flow.clear();
         out.flow.extend(self.flow_sm.iter().map(|x| *x as f32));
         out.velum_port = self.airway.frame.as_ref().map_or(0.0, |f| f.velum_port);
-        out.f0 = self.glottis.f0_now;
+        out.f0 = self.glottis.f0_now / self.distortion_pitch();
         out.voicing = self.glottis.voicing;
         out.p_lung = self.p_lung_now / CM_H2O; // the pressure applied, not the ramp's target
         out.out_rms = out_rms;

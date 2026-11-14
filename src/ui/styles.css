@@ -2903,17 +2903,188 @@ input[type="range"]::-moz-range-thumb {
 .coach-says.aim { border-left-color: var(--green); }
 .coach-says.avoid { border-left-color: var(--red); }
 
-/* the explanation scrolls inside its screen, so the folds and spectrum stay in view under it */
-.coach-text {
+/* the explanation (and, with the microphone on, the singer beside the take) scrolls inside its
+   screen, so the folds and spectrum stay in view under it */
+.coach-scroll {
   flex: 1 1 0;
   min-height: 150px;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 12px 14px 14px;
   scrollbar-width: thin;
   scrollbar-color: var(--blue-dim) transparent;
+}
+
+.coach-text {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px 14px;
+}
+
+/* ---------- Coach: the singer beside the take */
+.coach-you {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin: 10px 14px 0;
+  padding: 9px 11px 10px;
+  border: 1px solid var(--blue-dim);
+}
+
+.coach-you.failed {
+  border-color: rgba(255, 93, 64, 0.5);
+}
+
+.you-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 14px;
+}
+
+.you-head h4 {
+  margin: 0;
+  font-size: 9.5px;
+  font-weight: 300;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--amber);
+}
+
+.you-state,
+.you-now,
+.you-advice p,
+.you-small {
+  margin: 0;
+  font-family: "Archivo", system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-weight: 400;
+  letter-spacing: 0.01em;
+  text-transform: none;
+}
+
+.you-state {
+  font-size: 13px;
+  color: #cfe3ee;
+}
+
+.you-state.hearing {
+  color: var(--green);
+}
+
+.you-now {
+  min-height: 1.4em;
+  font-size: 14px;
+  color: #f1f8fb;
+}
+
+.you-meter {
+  display: grid;
+  grid-template-columns: 58px minmax(0, 1fr) 118px;
+  align-items: center;
+  gap: 8px;
+}
+
+.you-name {
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.you-bar {
+  position: relative;
+  height: 9px;
+  border: 1px solid var(--frame);
+}
+
+.you-target {
+  position: absolute;
+  top: -4px;
+  width: 2px;
+  height: 15px;
+  margin-left: -1px;
+  background: #f1f8fb;
+}
+
+.you-last {
+  position: absolute;
+  top: -2px;
+  width: 9px;
+  height: 9px;
+  margin-left: -5px;
+  border: 1.5px solid;
+  border-radius: 50%;
+}
+
+.you-live {
+  position: absolute;
+  top: -1px;
+  width: 9px;
+  height: 9px;
+  margin-left: -4px;
+  border-radius: 50%;
+  box-shadow: 0 0 6px currentColor;
+  transition: left 0.09s linear;
+}
+
+.you-nums {
+  font-size: 9.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #cfe3ee;
+  white-space: nowrap;
+}
+
+.you-advice {
+  margin-top: 3px;
+  padding-left: 9px;
+  border-left: 2px solid var(--amber);
+}
+
+.you-advice p {
+  font-size: 13.5px;
+  line-height: 1.45;
+  color: #f1f8fb;
+}
+
+.you-table {
+  margin-top: 4px;
+  border-collapse: collapse;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.you-table th,
+.you-table td {
+  padding: 2px 12px 2px 0;
+  text-align: left;
+  font-weight: 400;
+  font-size: 11px;
+  color: #e2f5fc;
+  white-space: nowrap;
+}
+
+.you-table thead th {
+  font-size: 8.5px;
+  letter-spacing: 0.16em;
+  color: var(--text-dim);
+}
+
+.you-table td i {
+  font-style: normal;
+  color: var(--blue);
+}
+
+.you-table tr.on th {
+  text-shadow: var(--glow-blue);
+}
+
+.you-small {
+  margin-top: 2px;
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: #9fbfd0;
 }
 
 .s-lesson .screen-body,
@@ -2972,5 +3143,260 @@ input[type="range"]::-moz-range-thumb {
   .right-coach {
     grid-template-columns: minmax(0, 1fr);
     grid-template-areas: "act" "lessons" "lesson" "folds" "spec";
+  }
+}
+
+/* ---------- Analyze: a recording over time, and what it is doing now */
+.right-analyze {
+  grid-template-columns: minmax(0, 290fr) minmax(0, 180fr) minmax(0, 220fr);
+  grid-template-rows: auto minmax(min-content, 410fr) minmax(min-content, 230fr);
+  grid-template-areas: "act act act" "time time time" "now folds spec";
+}
+
+.s-time { grid-area: time; }
+.s-now { grid-area: now; }
+.right-analyze .s-folds { grid-area: folds; }
+.right-analyze .s-spec { grid-area: spec; }
+
+.s-time .screen-body {
+  min-height: 300px;
+}
+
+.timeline {
+  cursor: crosshair;
+  touch-action: none;
+}
+
+/* the file input is worked by its button */
+.an-file {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.an-open.primary {
+  border-color: var(--amber);
+  color: #fff4dc;
+  font-size: 13px;
+  padding: 9px 16px;
+  box-shadow: 0 0 8px rgba(255, 179, 64, 0.3), inset 0 0 6px rgba(255, 179, 64, 0.12);
+}
+
+.an-mix {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.an-mix input {
+  width: 84px;
+}
+
+.an-empty {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 10px;
+  padding: 18px 26px 22px;
+  max-width: 640px;
+}
+
+.an-empty h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 300;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--text);
+  text-shadow: var(--glow-blue);
+}
+
+.an-empty p,
+.an-words,
+.an-vib {
+  margin: 0;
+  font-family: "Archivo", system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-weight: 400;
+  letter-spacing: 0.01em;
+  text-transform: none;
+  font-size: 14px;
+  line-height: 1.5;
+  color: #cfe3ee;
+}
+
+.an-empty p b {
+  font-weight: 500;
+  color: #f1f8fb;
+}
+
+.an-empty-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  margin: 6px 0;
+}
+
+.an-note-small {
+  font-size: 12px !important;
+  color: #9fbfd0 !important;
+}
+
+.an-error {
+  padding: 8px 10px;
+  border: 1px solid rgba(255, 93, 64, 0.5);
+  color: #ffd9d0 !important;
+}
+
+.an-stage {
+  font-size: 15px !important;
+  color: #f1f8fb !important;
+}
+
+.an-progress {
+  height: 3px;
+  background: var(--frame);
+}
+
+.an-progress i {
+  display: block;
+  height: 100%;
+  background: var(--amber);
+  box-shadow: 0 0 6px rgba(255, 179, 64, 0.6);
+  transition: width 0.15s linear;
+}
+
+.an-now {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 14px 12px;
+}
+
+.an-now-top {
+  display: flex;
+  gap: 22px;
+}
+
+.an-big {
+  display: flex;
+  flex-direction: column;
+  min-width: 96px;
+}
+
+.an-big-label {
+  font-size: 9px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.an-note,
+.an-vowel {
+  font-weight: 300;
+  font-size: 30px;
+  line-height: 1.1;
+  letter-spacing: 0.04em;
+}
+
+.an-note {
+  color: var(--amber);
+  text-shadow: 0 0 8px rgba(255, 179, 64, 0.5);
+}
+
+.an-vowel {
+  color: var(--green);
+  text-shadow: 0 0 8px rgba(91, 227, 129, 0.45);
+}
+
+.an-big-sub {
+  min-height: 1.3em;
+  font-size: 9.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.an-words {
+  min-height: 1.5em;
+  color: #f1f8fb !important;
+}
+
+.an-vib {
+  font-size: 12.5px !important;
+}
+
+.an-meter {
+  display: grid;
+  grid-template-columns: 62px minmax(0, 1fr) 104px;
+  align-items: center;
+  gap: 8px;
+}
+
+.an-meter-name {
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.an-meter-bar {
+  position: relative;
+  height: 7px;
+  border: 1px solid var(--frame);
+}
+
+.an-meter-fill {
+  display: block;
+  height: 100%;
+  opacity: 0.9;
+}
+
+.an-meter-dot {
+  position: absolute;
+  top: -3px;
+  width: 3px;
+  height: 11px;
+  margin-left: -1px;
+  box-shadow: 0 0 5px currentColor;
+}
+
+.an-meter-mid {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  width: 1px;
+  height: 100%;
+  background: var(--blue-dim);
+}
+
+.an-meter-ends {
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+@media (max-width: 1100px) {
+  .right-analyze {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-rows: none;
+    grid-template-areas: "act act" "time time" "now now" "folds spec";
+  }
+}
+
+@media (max-width: 640px) {
+  .right-analyze {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "act" "time" "now" "folds" "spec";
   }
 }

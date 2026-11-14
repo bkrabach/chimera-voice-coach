@@ -21,6 +21,10 @@ export class AudioEngine {
   /** long time-domain window for the waveform scope */
   analyserScope: AnalyserNode | null = null;
   private master: GainNode | null = null;
+  /** the voice's own level, ahead of the master (Analyze fades the model voice against a recording) */
+  private voice: GainNode | null = null;
+  /** into the analysers only, never the speakers (a microphone must be seen, not played back) */
+  private listen: GainNode | null = null;
   /** "close mic" chain: proximity bass, presence, compression (beatboxers cup the mic) */
   private micIn: AudioNode | null = null;
   private micOn = false;
@@ -128,11 +132,19 @@ export class AudioEngine {
     makeup.gain.value = 2.2;
     shelf.connect(presence).connect(comp).connect(makeup).connect(master);
     this.micIn = shelf;
-    node.connect(this.micOn ? shelf : master);
+    const voice = ctx.createGain();
+    this.voice = voice;
+    node.connect(voice);
+    voice.connect(this.micOn ? shelf : master);
     master.connect(ctx.destination);
     master.connect(analyser);
     master.connect(fast);
     master.connect(scope);
+    const listen = ctx.createGain();
+    listen.connect(analyser);
+    listen.connect(fast);
+    listen.connect(scope);
+    this.listen = listen;
     node.port.onmessage = (e: MessageEvent<FromWorklet>) => {
       const m = e.data;
       if (m.type === "telemetry") {
@@ -240,9 +252,9 @@ export class AudioEngine {
   setMic(on: boolean): void {
     if (on === this.micOn) return;
     this.micOn = on;
-    if (!this.node || !this.master || !this.micIn) return;
-    this.node.disconnect();
-    this.node.connect(on ? this.micIn : this.master);
+    if (!this.voice || !this.master || !this.micIn) return;
+    this.voice.disconnect();
+    this.voice.connect(on ? this.micIn : this.master);
   }
 
   setBeat(m: { steps?: import("../wasm/types.ts").BeatStep[] | (import("../wasm/types.ts").BeatStep | null)[]; bpm?: number; swing?: number; playing?: boolean }): void {
@@ -261,6 +273,21 @@ export class AudioEngine {
 
   beatHit(id: string, note?: number, accent?: number): void {
     this.send({ type: "beatHit", id, note, accent });
+  }
+
+  /** The engine voice's level (1 = as it is), separate from the master volume. */
+  setVoiceLevel(v: number): void {
+    if (this.voice && this.ctx) this.voice.gain.setTargetAtTime(v, this.ctx.currentTime, 0.02);
+  }
+
+  /** Where another sound (a recording played beside the voice) joins the output and the analysers; null before start(). */
+  get mixIn(): AudioNode | null {
+    return this.master;
+  }
+
+  /** Where a sound that should be seen but not heard (the singer's microphone) joins the analysers; null before start(). */
+  get listenIn(): AudioNode | null {
+    return this.listen;
   }
 
   setVolume(v: number): void {

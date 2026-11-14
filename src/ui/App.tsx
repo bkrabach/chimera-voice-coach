@@ -17,6 +17,7 @@ import { CreatureView } from "./components/CreatureView.tsx";
 import { BeatboxRight, BeatOverlay, beatInfo, beatSlots } from "./components/BeatboxPanel.tsx";
 import { SingRight, singInfo, singWords } from "./components/SingPanel.tsx";
 import { CoachRight, coachInfo, coachOverlay, coachSlots } from "./components/CoachPanel.tsx";
+import { AnalyzeRight, analyzeInfo, analyzeOverlay, analyzeSlots } from "./components/AnalyzePanel.tsx";
 import type { Mode } from "./store.ts";
 import type { BodyName } from "../worklet/protocol.ts";
 import { BodyPad } from "./components/BodyPad.tsx";
@@ -132,7 +133,7 @@ function LeftScreen() {
   return (
     <Screen className="left" focus lead={bestiary ? undefined : <BodyControl />} label={bestiary ? "Live creature airway" : "Live vocal tract"} tools={<ViewToggles />}>
       <Suspense fallback={null}>
-        {bestiary ? <CreatureView /> : mode === "coach" ? <Face slots={coachSlots} info={coachInfo} overlay={coachOverlay} /> : mode === "speak" ? <Face slots={speechSlots} info={speechInfo} overlay={speechWords} /> : mode === "sing" ? <Face info={singInfo} overlay={singWords} /> : mode === "beatbox" ? <Face slots={beatSlots} info={beatInfo} showFormants={false} /> : <Face />}
+        {bestiary ? <CreatureView /> : mode === "coach" ? <Face slots={coachSlots} info={coachInfo} overlay={coachOverlay} /> : mode === "analyze" ? <Face slots={analyzeSlots} info={analyzeInfo} overlay={analyzeOverlay} /> : mode === "speak" ? <Face slots={speechSlots} info={speechInfo} overlay={speechWords} /> : mode === "sing" ? <Face info={singInfo} overlay={singWords} /> : mode === "beatbox" ? <Face slots={beatSlots} info={beatInfo} showFormants={false} /> : <Face />}
       </Suspense>
       {mode === "beatbox" && <BeatOverlay />}
     </Screen>
@@ -200,7 +201,7 @@ function Wall() {
       <TopBar />
       <main className={`wall wall-${mode}`}>
         <LeftScreen />
-        {mode === "coach" ? <CoachRight /> : mode === "play" ? <PlayRight /> : mode === "speak" ? <SpeakRight /> : mode === "sing" ? <SingRight /> : mode === "beatbox" ? <BeatboxRight /> : <BestiaryRight />}
+        {mode === "coach" ? <CoachRight /> : mode === "analyze" ? <AnalyzeRight /> : mode === "play" ? <PlayRight /> : mode === "speak" ? <SpeakRight /> : mode === "sing" ? <SingRight /> : mode === "beatbox" ? <BeatboxRight /> : <BestiaryRight />}
       </main>
     </div>
   );

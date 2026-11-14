@@ -38,6 +38,11 @@ export const Q = {
 /** the twang posture: the funnel above the folds narrowed, the larynx a little high */
 const TWANG: Shape = { add: { larynx: 0.4 }, set: { epilarynx: 0.9 } };
 
+/** The voice's home note (MIDI): a comfortable low-middle note for each body. */
+export const HOME = { male: 52, female: 57, child: 62 } as const;
+
+export const midiHz = (m: number) => 440 * Math.pow(2, (m - 69) / 12);
+
 /** Semitones above the voice's home note for each part of the range. */
 export const REGISTER: Record<Register, number> = { low: -5, mid: 3, high: 12, top: 15 };
 
