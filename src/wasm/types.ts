@@ -123,6 +123,8 @@ export interface VoiceSource {
   voiced: boolean;
   /** 0 dark … 1 bright (default 0.25: as tension sets it) */
   brightness: number;
+  /** 0 clean … 1 harsh grit (subharmonic rattle, then noise); 0 changes nothing */
+  distortion: number;
 }
 
 export interface VoiceTelemetry {

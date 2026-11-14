@@ -10,7 +10,7 @@ import { singNoteOn, singNoteOff, stopSinging } from "./singing.ts";
 import { stopSpeaking } from "./speech.ts";
 import { connectMidi, disconnectMidi, type MidiStatus } from "./midi.ts";
 
-export type Mode = "play" | "speak" | "sing" | "bestiary" | "beatbox";
+export type Mode = "coach" | "analyze" | "play" | "speak" | "sing" | "bestiary" | "beatbox";
 
 export interface BeatState {
   steps: (BeatStep | null)[];
@@ -103,7 +103,7 @@ export function creatureKeyHz(midi: number, p: Pick<ParamDef, "min" | "max">): n
 
 function updateGate(s: { hold: boolean; heldNotes: number[]; mode: Mode; keyCall: string | null }) {
   // keys that trigger calls leave the breath to the call; sung notes breathe by themselves
-  const keysBreathe = !(s.mode === "bestiary" && s.keyCall) && s.mode !== "sing";
+  const keysBreathe = !(s.mode === "bestiary" && s.keyCall) && s.mode !== "sing" && s.mode !== "coach" && s.mode !== "analyze";
   engine.gate(s.hold || (keysBreathe && s.heldNotes.length > 0) ? 1 : 0);
 }
 
@@ -142,8 +142,8 @@ export const useStore = create<State>((set, get) => ({
   hold: false,
   heldNotes: [],
   view: { pressure: true, particles: true, grid: false, calipers: true, threeD: false },
-  // the app opens on Sing: hearing a song is the quickest way in (the plugin opens there too)
-  mode: "sing",
+  // this fork opens on Coach: the lessons are what it is for
+  mode: "coach",
   setMode: (m) => {
     const prev = get().mode;
     if (prev === m) return;
@@ -174,7 +174,8 @@ export const useStore = create<State>((set, get) => ({
     }
     if (prev === "sing") stopSinging();
     // speech and song breathe by themselves: a held breath would drone under them
-    if (m === "speak" || m === "sing") set({ hold: false });
+    // (Coach and Analyze drive the breath themselves too)
+    if (m === "speak" || m === "sing" || m === "coach" || m === "analyze") set({ hold: false });
     if (m === "beatbox") {
       // a beatboxer waits with the jaw nearly closed; the sounds bring their own breath
       set({ hold: false });

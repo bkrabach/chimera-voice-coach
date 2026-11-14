@@ -40,13 +40,18 @@ pub struct VoiceSource {
     /// the model can, so there is little room to darken and a lot to brighten.
     #[serde(default = "default_brightness")]
     pub brightness: f64,
+    /// 0 clean … 1 harsh: grit made above and at the folds (a rock singer's rasp). The cycles stop
+    /// repeating exactly: first every other one differs (a subharmonic an octave below, the
+    /// "rattle"), then the pattern breaks up into noise. 0 leaves the voice exactly as it was.
+    #[serde(default)]
+    pub distortion: f64,
 }
 
 fn default_brightness() -> f64 {
     DEFAULT_SOURCE.brightness
 }
 
-pub const DEFAULT_SOURCE: VoiceSource = VoiceSource { f0: 110.0, glide: 0.06, pressure: 8.0, breathiness: 0.15, tension: 0.5, fry: 0.0, roughness: 0.1, vibrato_depth: 0.0, vibrato_rate: 6.0, drift: 5.0, voiced: true, brightness: 0.25 };
+pub const DEFAULT_SOURCE: VoiceSource = VoiceSource { f0: 110.0, glide: 0.06, pressure: 8.0, breathiness: 0.15, tension: 0.5, fry: 0.0, roughness: 0.1, vibrato_depth: 0.0, vibrato_rate: 6.0, drift: 5.0, voiced: true, brightness: 0.25, distortion: 0.0 };
 
 /// `Partial<VoiceSource>`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -76,6 +81,8 @@ pub struct SourcePatch {
     pub voiced: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub brightness: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub distortion: Option<f64>,
 }
 
 impl SourcePatch {
@@ -87,13 +94,13 @@ impl SourcePatch {
         macro_rules! set {
             ($($f:ident),*) => { $( if let Some(x) = self.$f { s.$f = x; } )* };
         }
-        set!(f0, glide, pressure, breathiness, tension, fry, roughness, vibrato_depth, vibrato_rate, drift, voiced, brightness);
+        set!(f0, glide, pressure, breathiness, tension, fry, roughness, vibrato_depth, vibrato_rate, drift, voiced, brightness, distortion);
     }
     pub fn merge(&mut self, o: &SourcePatch) {
         macro_rules! set {
             ($($f:ident),*) => { $( if o.$f.is_some() { self.$f = o.$f; } )* };
         }
-        set!(f0, glide, pressure, breathiness, tension, fry, roughness, vibrato_depth, vibrato_rate, drift, voiced, brightness);
+        set!(f0, glide, pressure, breathiness, tension, fry, roughness, vibrato_depth, vibrato_rate, drift, voiced, brightness, distortion);
     }
     pub fn from_source(s: &VoiceSource) -> Self {
         SourcePatch {
@@ -109,6 +116,7 @@ impl SourcePatch {
             drift: Some(s.drift),
             voiced: Some(s.voiced),
             brightness: Some(s.brightness),
+            distortion: Some(s.distortion),
         }
     }
 }
@@ -343,6 +351,8 @@ impl HumanVoice {
         g.jitter = 0.0021 + 0.0245 * s.roughness;
         g.shimmer = 0.02 + 0.22 * s.roughness;
         g.diplophonia = if s.roughness > 0.5 { (s.roughness - 0.5) * 1.4 } else { 0.0 };
+        // grit: the logistic map behind `chaos` walks from period doubling into noise (see GlottisParams)
+        g.chaos = clamp(s.distortion, 0.0, 1.0);
         g.vibrato_depth = s.vibrato_depth;
         g.vibrato_rate = s.vibrato_rate;
         g.drift = s.drift;
