@@ -35,7 +35,7 @@ beforeAll(async () => {
     const v = new OfflineVoice(FS, body);
     const x = renderTake(v, vm, l, t, note);
     v.free();
-    const track = analyze(x, FS, cb, undefined, { alpha: 1 });
+    const track = analyze(x, FS, cb);
     sung[`${lid}/${tid}`] = { x, note, track, sum: C.summarize(track)! };
   }
 }, 120_000);
@@ -55,18 +55,34 @@ describe("the singer beside the take", () => {
   });
 
   test("the takes differ where their lessons say they do", () => {
-    expect(sung["twang/twang"].sum.ring).toBeGreaterThan(sung["twang/plain"].sum.ring + 0.3);
-    expect(sung["closure/breathy"].sum.breath).toBeGreaterThan(sung["closure/clean"].sum.breath + 0.15);
-    expect(sung["grit/rasp"].sum.grit).toBeGreaterThan(0.3);
-    expect(sung["closure/clean"].sum.grit).toBeLessThan(0.08);
+    expect(sung["twang/twang"].sum.ring).toBeGreaterThan(sung["twang/plain"].sum.ring + 0.2);
+    expect(sung["closure/breathy"].sum.breath).toBeGreaterThan(sung["closure/clean"].sum.breath + 0.3);
+    expect(sung["closure/breathy"].sum.press).toBeLessThan(sung["closure/clean"].sum.press - 0.15);
+    expect(sung["grit/rasp"].sum.grit).toBeGreaterThan(0.7);
+    // a clean take reads well under the line below which grit is "none" (see NONE in compare.ts)
+    expect(sung["closure/clean"].sum.grit).toBeLessThan(0.35);
+    expect(sung["twang/twang"].sum.grit).toBeLessThan(0.35);
   });
 
-  test("the advice names what is furthest from the take, and says when it is close", () => {
+  test("the advice names what is far from the take, and says when it is close", () => {
     const twang = sung["twang/twang"].sum, plain = sung["twang/plain"].sum;
-    expect(C.advise(twang, plain, true)[0]).toMatch(/^Less ring/);
-    expect(C.advise(plain, twang, true)[0]).toMatch(/^More ring/);
+    expect(C.advise(twang, plain, true).join(" ")).toMatch(/Less ring/);
+    expect(C.advise(plain, twang, true).join(" ")).toMatch(/More ring/);
     expect(C.advise(twang, twang, true)).toEqual([expect.stringMatching(/^Close to the take/)]);
     expect(C.advise(sung["closure/clean"].sum, sung["closure/breathy"].sum, true).join(" ")).toMatch(/Airier than the take/);
+    expect(C.advise(sung["grit/rasp"].sum, twang, true).join(" ")).toMatch(/Cleaner than the take/);
+    expect(C.advise(twang, sung["grit/rasp"].sum, true).join(" ")).toMatch(/More rattle than the take/);
+  });
+
+  test("two clean voices are never told apart by grit or air: the scales read anything low down there", () => {
+    // a trained singer's straight tone reads grit 0.09 and air 0.14; the synthesizer's clean takes up to 0.28 and 0.41
+    const take = { ...sung["twang/twang"].sum, grit: 0.4, breath: 0.25 };
+    const you = { ...take, grit: 0.03, breath: 0.02 };
+    expect(C.advise(take, you, true)).toEqual([expect.stringMatching(/^Close to the take/)]);
+    expect(C.advise(you, take, true)).toEqual([expect.stringMatching(/^Close to the take/)]);
+    // but a singer who is airy or gritty over a clean take hears about it
+    expect(C.advise(take, { ...take, breath: 0.6 }, true).join(" ")).toMatch(/Airier/);
+    expect(C.advise(take, { ...take, grit: 0.75 }, true).join(" ")).toMatch(/More rattle/);
   });
 
   test("a held note half a semitone under is called flat; a moving take's pitch is not judged", () => {
@@ -74,11 +90,6 @@ describe("the singer beside the take", () => {
     const flat = { ...t, midi: t.midi - 0.5 };
     expect(C.advise(t, flat, true).join(" ")).toMatch(/50 cents flat/);
     expect(C.advise(t, flat, false).join(" ")).not.toMatch(/flat/);
-  });
-
-  test("the tract factor given is the one used", () => {
-    const t = analyze(sung["twang/plain"].x, FS, cb, undefined, { alpha: 0.94 });
-    expect(t.alpha).toBe(0.94);
   });
 
   test("a live voice read in overlapping chunks gives the whole's reading", () => {
@@ -89,7 +100,7 @@ describe("the singer beside the take", () => {
     let last = -1;
     for (let end = Math.round(0.6 * FS); end <= x.length; end += Math.round(0.1 * FS)) {
       const e = end - (end % FRAME), s = Math.max(0, e - CHUNK);
-      const t = analyze(x.subarray(s, e), FS, cb, undefined, { alpha: 1, floorDb: -58 });
+      const t = analyze(x.subarray(s, e), FS, cb, undefined, { floorDb: -58 });
       const base = s / FRAME, final = base + t.n - 1 - LOOKBACK;
       for (let abs = Math.max(last + 1, base); abs <= final; abs++) g.push(t, abs - base);
       last = Math.max(last, final);

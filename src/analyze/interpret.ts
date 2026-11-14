@@ -1,16 +1,32 @@
 /**
- * From the measurements to what a singer would call them, each 0..1.
+ * From the measurements to the four scales a singer reads, each 0..1: air, drive, ring, grit.
  *
- * The scales were set by analysing the engine singing with known settings
- * (`bun tools/analyze-calibrate.ts` prints the measurements beside what went in). A real voice,
- * a room and a separated stem all add their own noise, so these are relative readings (more or
- * less than elsewhere in the same recording) more than absolute ones.
+ * Each is a logistic model over two or three measures, fitted to singing whose technique is
+ * known: 20 trained singers (VocalSet) and 27 metal vocalists (EMVD). tools/eval/fit.py fits them
+ * and writes scales.generated.json; docs/validation.md says how well each then tells the
+ * techniques apart with the singer held out. So 0.5 on a scale means "half-way between the two
+ * kinds of singing it was fitted to tell apart", for those singers: a reading is best compared
+ * with other moments of the same voice.
  */
 import type { VoiceTrack } from "./analyze.ts";
+import SCALES from "./scales.generated.json";
 
-const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
-/** 0 at `a`, 1 at `b` (either order) */
-export const ramp = (v: number, a: number, b: number) => clamp01((v - a) / (b - a));
+interface Model {
+  features: string[];
+  mean: number[];
+  scale: number[];
+  coef: number[];
+  intercept: number;
+}
+
+type Measure = "slope" | "alphaRatio" | "h1h2" | "spr" | "ringDb" | "nhrLow" | "nhrHigh" | "sub";
+
+/** A model's reading of frame `i`, 0..1. */
+function read(m: Model, t: VoiceTrack, i: number): number {
+  let z = m.intercept;
+  for (let k = 0; k < m.features.length; k++) z += (m.coef[k] * (t[m.features[k] as Measure][i] - m.mean[k])) / m.scale[k];
+  return 1 / (1 + Math.exp(-z));
+}
 
 /** Median over ±r frames within voiced runs: a reading must last to count (a consonant's edge is not grit). */
 function steady(v: Float32Array, f0: Float32Array, r: number): void {
@@ -26,27 +42,14 @@ function steady(v: Float32Array, f0: Float32Array, r: number): void {
 }
 
 export function interpret(t: VoiceTrack): void {
+  const air: Model = SCALES.breath, drive: Model = SCALES.press, ring: Model = SCALES.ring, grit: Model = SCALES.grit;
   for (let i = 0; i < t.n; i++) {
-    if (!(t.f0[i] > 0) || t.entry[i] < 0) continue;
-    // How firmly the folds close, from how fast the source's harmonics fall away: a pressed voice
-    // falls 2-4 dB per octave, a chest voice 4-7, an easy one 8-10, head and falsetto 11-13.
-    const press = ramp(t.slope[i], -13, -2.5);
-    t.press[i] = press;
-    t.weight[i] = press;
-    // Grit: energy between the low harmonics, whether a subharmonic (the half-way points alone)
-    // or noise (everywhere). `sub` is negative when the quarter points are the louder.
-    const mid = t.hnrLow[i] - Math.min(0, t.sub[i]);
-    // (a soft, airy voice hisses there too, without being gritty: its part is taken off)
-    t.grit[i] = ramp(mid, 22, 6) * (0.3 + 0.7 * ramp(t.slope[i], -11.5, -8.5));
-    // Ring: the 3 kHz band over what this vowel gives by itself. Twang adds 3-7 dB, a firm chest
-    // voice 8, both together (a belt) 10-14.
-    t.ring[i] = ramp(t.ringExcess[i], 1, 13);
-    // Air: a soft source, with more hiss between the upper harmonics than a clean voice has at this pitch
-    // (a clean voice's upper harmonics stand 11-19 dB above what is between them; a breathy one's 8 or less)
-    const hiss = Number.isFinite(t.hnrHigh[i]) ? ramp(t.hnrHigh[i], 12, 4) : 0.2;
-    const soft = ramp(t.slope[i], -9.5, -13.5);
-    const light = ramp(t.h1h2[i], 5, 12);
-    t.breath[i] = clamp01((0.45 * soft + 0.35 * light + 0.5 * hiss) * (1 - 0.7 * t.grit[i]));
+    if (!(t.f0[i] > 0)) continue;
+    t.press[i] = read(drive, t, i);
+    t.ring[i] = read(ring, t, i);
+    t.grit[i] = read(grit, t, i);
+    // air and grit both put noise between the harmonics; a rasp is not breathiness, so grit takes its share
+    t.breath[i] = read(air, t, i) * (1 - 0.8 * t.grit[i]);
   }
   steady(t.grit, t.f0, 4);
   steady(t.ring, t.f0, 3);

@@ -1,34 +1,38 @@
 /**
  * A recorded voice → what the singer was doing, frame by frame (every 10 ms).
  *
- * Measured directly: level, pitch, the level of each harmonic, and what lies between the
- * harmonics (noise, subharmonics). Inferred by matching: the tract shape. Each voiced frame's
- * harmonic levels are compared with the engine's transfer function for every shape in the
- * codebook, with the voice source's overall level and spectral slope left free, and the best
- * path through the candidates is taken (a mouth cannot jump between frames). The match works on
- * the harmonics as they are, so it does not need to find formant peaks, which a high note's few,
- * widely spaced harmonics do not show.
+ * Everything read here is a measurement with a standard definition, checked on real, labelled
+ * singing (docs/validation.md has the numbers, tools/eval/ the checks):
  *
- * It is an estimate from sound alone: many shapes give nearly the same resonances, and a real
- * throat is not the model's. See `VoiceTrack.fit` for how well each frame matched.
+ *  - pitch, by YIN's difference function and a path search (dsp.ts);
+ *  - formants F1..F3, by linear prediction as Praat does it (formants.ts), and from the first two
+ *    the vowel, as the nearest of the five sung vowels (vowels.ts);
+ *  - the harmonics' levels, from a stretch re-timed to a steady pitch, and from them the source's
+ *    spectral slope (how fast the harmonics fall away, once the formants are taken out) and the
+ *    singing power ratio (the 2-4 kHz band over the band below it: "ring");
+ *  - what is between the harmonics (noise over harmonics, low and high; a subharmonic): breath
+ *    and roughness.
+ *
+ * One thing is not measured: the shape of the mouth. The head is drawn in the engine shape whose
+ * formants are nearest the measured ones (codebook.ts): an illustration of the measurement.
  */
-import { HarmonicAnalyser, MAX_HARMONICS, medianVoiced, resample, trackPitch } from "./dsp.ts";
-import type { Codebook } from "./codebook.ts";
-import { vowelWord } from "./describe.ts";
+import { HarmonicAnalyser, PITCH_WINDOW, medianVoiced, resample, trackPitch } from "./dsp.ts";
+import { nearestShape, type Codebook } from "./codebook.ts";
+import { steadyFormants, trackFormants } from "./formants.ts";
 import { interpret } from "./interpret.ts";
+import { nameVowel, SUNG_VOWELS } from "./vowels.ts";
 
 export const FS = 16000;
 export const HOP = 160;
 
-export const KIND = { silence: 0, voiced: 1, noise: 2, breath: 3 } as const;
+/** harsh: loud sound with no steady pitch that is not a hiss (a scream, a growl) */
+export const KIND = { silence: 0, voiced: 1, noise: 2, breath: 3, harsh: 4 } as const;
 
 export interface VoiceTrack {
   /** seconds per frame */
   hop: number;
   n: number;
   duration: number;
-  /** tract-length factor: the singer's resonances sit at `alpha` × the model body's */
-  alpha: number;
   keys: readonly string[];
   /** KIND per frame */
   kind: Uint8Array;
@@ -41,47 +45,51 @@ export interface VoiceTrack {
   periodicity: Float32Array;
   /** how much better the sound repeats every two periods than every one (see PitchTrack.doubling) */
   doubling: Float32Array;
-  /** matched codebook entry, −1 where none */
-  entry: Int32Array;
-  /** matched base shape (see Codebook.base), −1 where none */
-  shape: Int32Array;
+  /** F1..F3 as measured (Hz), [n × 3]; 0 where there is none */
+  formants: Float32Array;
+  /**
+   * How far the pitch lets the formants be read, 0..1: 1 up to 500 Hz, falling to 0 at 700 Hz,
+   * where the harmonics are too far apart to show the first formant. The vowel and the shape
+   * drawn are no surer than this.
+   */
+  sure: Float32Array;
   /** the vowel, as an index into `vowelNames` (255: none), steadied so a held vowel keeps one name */
   vowel: Uint8Array;
-  /** the vowels as a singer would spell them ("EE", "AH"…), and an IPA symbol for each */
+  /** the next nearest vowel when the formants sit between two (255 otherwise) */
+  vowelNear: Uint8Array;
+  /** the five sung vowels as a singer would spell them ("EE", "AH"…), and an IPA symbol for each */
   vowelNames: string[];
   vowelIpa: string[];
-  /** articulation, [n × keys.length], smoothed; the last voiced posture is held through gaps */
+  /** the shape drawn (see Codebook), −1 where nothing is sung */
+  shape: Int32Array;
+  /** its articulation, [n × keys.length], smoothed; the last sung posture is held through gaps */
   artic: Float32Array;
-  /** F1..F3 of the matched shape scaled by alpha (Hz), [n × 3] */
-  formants: Float32Array;
-  /** how far the frame's harmonics were from the matched shape (dB rms): lower is surer */
-  fit: Float32Array;
   /** the voice source's spectral slope (dB per octave; steeper = softer, breathier) */
   slope: Float32Array;
   /** first harmonic over second at the source (dB; high = light or breathy, low = pressed) */
   h1h2: Float32Array;
-  /** harmonics over what lies between them, below 1.8 kHz and from there to 4.5 kHz (dB) */
-  hnrLow: Float32Array;
-  hnrHigh: Float32Array;
-  /** how much the half-way points stand above their surroundings (dB): a subharmonic */
+  /** alpha ratio (dB): the harmonics' energy at 1-5 kHz over their energy below 1 kHz (the usual measure of spectral balance) */
+  alphaRatio: Float32Array;
+  /** singing power ratio (dB): the strongest harmonic at 2-4 kHz over the strongest below 2 kHz */
+  spr: Float32Array;
+  /** share of the harmonics' energy that lies at 2.4-3.8 kHz (dB) */
+  ringDb: Float32Array;
+  /** noise over harmonics (dB) below 1.5 kHz and from there to 5 kHz: 0 is as much noise as tone */
+  nhrLow: Float32Array;
+  nhrHigh: Float32Array;
+  /** how much the half-way points between the low harmonics stand above their surroundings (dB): a subharmonic */
   sub: Float32Array;
   /** spectral centroid of unvoiced sound (Hz) */
   centroid: Float32Array;
-  /** share of the harmonics' energy that lies at 2.4-3.8 kHz (dB): the band that carries over a band */
-  ringDb: Float32Array;
-  /** how much more of it there is than the matched vowel shape gives with an easy, speech-like source (dB) */
-  ringExcess: Float32Array;
-  // ---- interpreted, 0..1 (see interpret.ts)
-  /** ring: how much of the sound is in the 3 kHz band, whatever makes it */
+  // ---- the scales, 0..1 (see interpret.ts)
+  /** ring: how much of the sound is in the 2-4 kHz band, whatever makes it */
   ring: Float32Array;
   breath: Float32Array;
+  /** how hard the voice is driven: light … firm … pressed (from the source's slope) */
   press: Float32Array;
   grit: Float32Array;
-  twang: Float32Array;
-  /** fold weight: 0 light (head-like) … 1 heavy (chest-like) */
+  /** the same as `press` (kept for older callers) */
   weight: Float32Array;
-  /** larynx offset from the singer's usual height (cm) */
-  larynx: Float32Array;
   /** vibrato rate (Hz) and extent (cents each way); 0 where there is none */
   vibRate: Float32Array;
   vibExtent: Float32Array;
@@ -89,147 +97,21 @@ export interface VoiceTrack {
 
 export type Progress = (stage: string, fraction: number) => void;
 
-const TOP = 6;
-const STAGE_A = 5;
-const FMAX_MATCH = 5000;
-
-/** The harmonic levels of one frame against the codebook's entries. */
-class Matcher {
-  private readonly idx = new Int32Array(MAX_HARMONICS);
-  private readonly frac = new Float32Array(MAX_HARMONICS);
-  private readonly x = new Float32Array(MAX_HARMONICS);
-  private readonly w = new Float32Array(MAX_HARMONICS);
-  private y: Float32Array = new Float32Array(0);
-  private K = 0;
-  private Sw = 0;
-  private Swx = 0;
-  private Swxx = 0;
-  /** slope (dB/oct) and offset (dB at 1 kHz) of the last `cost` call */
-  slope = 0;
-  offset = 0;
-
-  constructor(private readonly cb: Codebook) {}
-
-  /** Set the frame: its pitch, the levels of its harmonics, and the tract-length factor. Returns the harmonics used. */
-  prepare(f0: number, db: Float32Array, n: number, alpha: number): number {
-    const { df, nf } = this.cb;
-    let K = 0, top = -Infinity;
-    for (let k = 0; k < n; k++) {
-      const f = ((k + 1) * f0) / alpha;
-      if (f > FMAX_MATCH || f / df >= nf - 1) break;
-      const p = f / df;
-      this.idx[k] = Math.floor(p);
-      this.frac[k] = p - Math.floor(p);
-      this.x[k] = Math.log2(((k + 1) * f0) / 1000);
-      if (db[k] > top) top = db[k];
-      K = k + 1;
-    }
-    let Sw = 0, Swx = 0, Swxx = 0;
-    for (let k = 0; k < K; k++) {
-      // strong harmonics count for more: a weak one's level is mostly noise
-      let w = Math.max(0.12, Math.min(1, (db[k] - (top - 46)) / 30));
-      if (k === 0) w *= 0.6; // the first harmonic's level is the source's as much as the tract's
-      this.w[k] = w;
-      Sw += w;
-      Swx += w * this.x[k];
-      Swxx += w * this.x[k] * this.x[k];
-    }
-    this.y = db;
-    this.K = K;
-    this.Sw = Sw;
-    this.Swx = Swx;
-    this.Swxx = Swxx;
-    return K;
-  }
-
-  /** Mean squared distance (dB²) between the frame and an entry, with the source's level and slope fitted. */
-  cost(entry: number): number {
-    const { H, nf } = this.cb;
-    const off = entry * nf;
-    const { idx, frac, x, w, y, K, Sw, Swx, Swxx } = this;
-    let Swr = 0, Swxr = 0, Swrr = 0;
-    for (let k = 0; k < K; k++) {
-      const i = off + idx[k];
-      const r = y[k] - (H[i] + (H[i + 1] - H[i]) * frac[k]);
-      const wr = w[k] * r;
-      Swr += wr;
-      Swxr += wr * x[k];
-      Swrr += wr * r;
-    }
-    const den = Sw * Swxx - Swx * Swx;
-    let s = den > 1e-9 ? (Sw * Swxr - Swx * Swr) / den : -9;
-    // a voice source falls between about 0 and −26 dB per octave: no shape may borrow more
-    if (s > 0) s = 0;
-    else if (s < -26) s = -26;
-    const c = (Swr - s * Swx) / Sw;
-    this.slope = s;
-    this.offset = c;
-    const sse = Swrr - 2 * s * Swxr - 2 * c * Swr + s * s * Swxx + 2 * s * c * Swx + c * c * Sw;
-    return Math.max(0, sse / Sw);
-  }
-
-  /**
-   * The ring band (2.4-3.8 kHz): its share of the frame's harmonic energy (dB), and how far that
-   * is above the share `entry`'s shape would have with an easy, speech-like source (one falling
-   * 9.5 dB per octave). The second is the ring the singer adds, by twang or by pressing, on top
-   * of what the vowel gives by itself ("ee" rings more than "oo" whoever sings it). NaN when no
-   * harmonic falls in the band.
-   */
-  ring(entry: number): { share: number; boost: number } {
-    const { H, nf } = this.cb;
-    let inBand = 0, all = 0, refBand = 0, refAll = 0, cnt = 0;
-    for (let k = 0; k < this.K; k++) {
-      const f = 1000 * Math.pow(2, this.x[k]);
-      const p = Math.pow(10, this.y[k] / 10);
-      const i = entry * nf + this.idx[k];
-      const ref = Math.pow(10, (H[i] + (H[i + 1] - H[i]) * this.frac[k] - 9.5 * this.x[k]) / 10);
-      all += p;
-      refAll += ref;
-      if (f < 2400 || f > 3800) continue;
-      inBand += p;
-      refBand += ref;
-      cnt++;
-    }
-    if (!cnt || !(all > 0) || !(refAll > 0)) return { share: NaN, boost: NaN };
-    const share = 10 * Math.log10(inBand / all + 1e-12);
-    return { share, boost: share - 10 * Math.log10(refBand / refAll + 1e-12) };
-  }
-
-  /** The source's first harmonic over its second (dB), once the entry's tract is taken out. */
-  h1h2(entry: number): number {
-    if (this.K < 2) return 0;
-    const { H, nf } = this.cb;
-    const at = (k: number) => {
-      const i = entry * nf + this.idx[k];
-      return this.y[k] - (H[i] + (H[i + 1] - H[i]) * this.frac[k]);
-    };
-    return at(0) - at(1);
-  }
-}
-
-/** What a variant costs before the sound is heard (dB²): plain shapes are preferred when the fit is equal. */
-const prior = (cb: Codebook, v: number): number => 0.6 * Math.abs(cb.variants[v].larynx) + 0.7 * Math.max(0, cb.variants[v].twang - 0.1);
-
-/** Insert (cost, entry, slope) into a frame's top list (ascending by cost). */
-function keep(costs: Float32Array, entries: Int32Array, slopes: Float32Array, at: number, cost: number, entry: number, slope: number): void {
-  if (cost >= costs[at + TOP - 1]) return;
-  let i = TOP - 1;
-  while (i > 0 && costs[at + i - 1] > cost) {
-    costs[at + i] = costs[at + i - 1];
-    entries[at + i] = entries[at + i - 1];
-    slopes[at + i] = slopes[at + i - 1];
-    i--;
-  }
-  costs[at + i] = cost;
-  entries[at + i] = entry;
-  slopes[at + i] = slope;
-}
-
 export interface AnalyzeOptions {
-  /** the singer's tract-length factor, when it is already known (a live voice: it is sized once, not per chunk) */
-  alpha?: number;
   /** nothing quieter than this is voice (dB re full scale): a live microphone's room noise */
   floorDb?: number;
+}
+
+/** a frame that was sung: it has a pitch and a shape */
+export const isSung = (t: VoiceTrack, i: number): boolean => t.f0[i] > 0 && t.shape[i] >= 0;
+
+/** harmonics above this are left out of the source's slope (Hz) */
+const FMAX_SOURCE = 4000;
+
+/** The gain (dB) of one resonance at `f`: a two-pole resonator with centre `F` and bandwidth `B`. */
+function resonance(f: number, F: number, B: number): number {
+  const h = (B * B) / 4;
+  return 10 * Math.log10(((F * F + h) * (F * F + h)) / (((F - f) * (F - f) + h) * ((F + f) * (F + f) + h)));
 }
 
 /** Analyse a mono recording. */
@@ -238,43 +120,42 @@ export function analyze(input: Float32Array, fsIn: number, cb: Codebook, progres
   const x = resample(input, fsIn, FS);
   const n = Math.floor(x.length / HOP);
   const nKeys = cb.keys.length;
+  const z = () => new Float32Array(n);
   const t: VoiceTrack = {
     hop: HOP / FS,
     n,
     duration: x.length / FS,
-    alpha: 1,
     keys: cb.keys,
     kind: new Uint8Array(n),
-    level: new Float32Array(n).fill(-120),
-    f0: new Float32Array(n),
-    note: new Float32Array(n),
-    periodicity: new Float32Array(n),
-    doubling: new Float32Array(n),
-    entry: new Int32Array(n).fill(-1),
-    shape: new Int32Array(n).fill(-1),
-    vowel: new Uint8Array(n).fill(255),
-    vowelNames: [],
-    vowelIpa: [],
-    artic: new Float32Array(n * nKeys),
+    level: z().fill(-120),
+    f0: z(),
+    note: z(),
+    periodicity: z(),
+    doubling: z(),
     formants: new Float32Array(n * 3),
-    fit: new Float32Array(n),
-    slope: new Float32Array(n),
-    h1h2: new Float32Array(n),
-    hnrLow: new Float32Array(n),
-    hnrHigh: new Float32Array(n),
-    sub: new Float32Array(n),
-    centroid: new Float32Array(n),
-    ringDb: new Float32Array(n).fill(-60),
-    ringExcess: new Float32Array(n),
-    ring: new Float32Array(n),
-    breath: new Float32Array(n),
-    press: new Float32Array(n),
-    grit: new Float32Array(n),
-    twang: new Float32Array(n),
-    weight: new Float32Array(n),
-    larynx: new Float32Array(n),
-    vibRate: new Float32Array(n),
-    vibExtent: new Float32Array(n),
+    sure: z(),
+    vowel: new Uint8Array(n).fill(255),
+    vowelNear: new Uint8Array(n).fill(255),
+    vowelNames: SUNG_VOWELS.map((v) => v.name),
+    vowelIpa: SUNG_VOWELS.map((v) => v.ipa),
+    shape: new Int32Array(n).fill(-1),
+    artic: new Float32Array(n * nKeys),
+    slope: z(),
+    h1h2: z(),
+    alphaRatio: z().fill(-30),
+    spr: z().fill(-40),
+    ringDb: z().fill(-60),
+    nhrLow: z().fill(-30),
+    nhrHigh: z().fill(-30),
+    sub: z(),
+    centroid: z(),
+    ring: z(),
+    breath: z(),
+    press: z(),
+    grit: z(),
+    weight: z(),
+    vibRate: z(),
+    vibExtent: z(),
   };
   if (n === 0) return t;
 
@@ -282,12 +163,9 @@ export function analyze(input: Float32Array, fsIn: number, cb: Codebook, progres
   const half = Math.round(0.015 * FS);
   const sq = new Float64Array(x.length + 1);
   for (let i = 0; i < x.length; i++) sq[i + 1] = sq[i] + x[i] * x[i];
-  let peak = -120;
   for (let i = 0; i < n; i++) {
     const a = Math.max(0, i * HOP - half), b = Math.min(x.length, i * HOP + half);
-    const db = 10 * Math.log10((sq[b] - sq[a]) / Math.max(1, b - a) + 1e-12);
-    t.level[i] = db;
-    if (db > peak) peak = db;
+    t.level[i] = 10 * Math.log10((sq[b] - sq[a]) / Math.max(1, b - a) + 1e-12);
   }
   // "loud" for this recording: the level its louder frames reach
   const sorted = Array.from(t.level).sort((a, b) => a - b);
@@ -312,8 +190,15 @@ export function analyze(input: Float32Array, fsIn: number, cb: Codebook, progres
     i = j;
   }
 
-  // ---- harmonics of every voiced frame
-  progress?.("Measuring the harmonics", 0.15);
+  // ---- formants, by linear prediction (the ceiling follows the body: 5000 Hz for a man, 5500 for a woman)
+  progress?.("Measuring the formants", 0.15);
+  const ceiling = 5000 + 500 * Math.max(0, Math.min(1, cb.body.female)) + 1000 * Math.max(0, Math.min(1, cb.body.child));
+  const ft = trackFormants(x, FS, HOP, t.f0, ceiling);
+  steadyFormants(ft, 2);
+  t.formants.set(ft.f);
+
+  // ---- the harmonics of every voiced frame, and what lies between them
+  progress?.("Measuring the harmonics", 0.4);
   const an = new HarmonicAnalyser(FS, 2048);
   // the pitch at a sample position: between the frames' pitches, but never across a leap or into silence
   let f0Here = 100;
@@ -324,7 +209,9 @@ export function analyze(input: Float32Array, fsIn: number, cb: Codebook, progres
     const near = p - a < 0.5 ? fa || fb : fb || fa;
     return near > 0 && Math.abs(Math.log2(near / f0Here)) < 0.4 ? near : f0Here;
   };
-  const hdb = new Float32Array(n * MAX_HARMONICS), hn = new Uint8Array(n);
+  // the tract's upper resonances, about a thousand hertz apart (scaled with the formant ceiling):
+  // left out, the resonance model falls away far faster above 2 kHz than a voice does
+  const spacing = ceiling / 5;
   for (let i = 0; i < n; i++) {
     if (t.f0[i] > 0) {
       const f0 = t.f0[i];
@@ -336,17 +223,61 @@ export function analyze(input: Float32Array, fsIn: number, cb: Codebook, progres
       const mid = Math.min(5, st.periods);
       an.spectrumOf(st.buf, ((st.periods - mid) >> 1) * st.S, mid * st.S);
       const h = an.harmonics(f0w, FS / 2 - 200);
-      hn[i] = h.n;
-      hdb.set(h.db.subarray(0, h.n), i * MAX_HARMONICS);
-      // what lies between the harmonics, from the whole stretch (its peaks are narrow enough to
-      // leave the gaps clear): hiss up high is breath, a subharmonic or noise low down is grit
+      // what lies between the harmonics, from the whole stretch (its peaks are narrow enough to leave the gaps clear)
       an.spectrumOf(st.buf, 0, st.periods * st.S);
-      const hi = an.gaps(f0w, 1800, 4500);
-      const lo = an.gaps(f0w, 0, 1800);
-      t.hnrLow[i] = lo.hnr;
-      t.sub[i] = lo.sub;
-      // (no harmonic up there strong enough to measure against: unknown)
-      t.hnrHigh[i] = hi.n ? hi.hnr : NaN;
+      // (the bands meet half-way between two harmonics: a strong harmonic just under an edge would
+      // otherwise spill its skirt over it and be counted as the upper band's noise)
+      const split = (Math.max(1, Math.floor(1500 / f0w)) + 0.5) * f0w, upper = (Math.max(2, Math.floor(5000 / f0w)) + 0.5) * f0w;
+      const lo = an.noiseOverHarmonics(f0w, 0.5 * f0w, split), hi = an.noiseOverHarmonics(f0w, split, upper);
+      t.nhrLow[i] = Number.isFinite(lo) ? lo : -30;
+      t.nhrHigh[i] = Number.isFinite(hi) ? hi : t.nhrLow[i];
+      t.sub[i] = an.gaps(f0w, 0, 1800).sub;
+
+      // ---- the source's slope: the harmonics' levels with the measured formants taken out
+      const F1 = ft.f[i * 3] || 500, F2 = ft.f[i * 3 + 1] || 1500, F3 = ft.f[i * 3 + 2] || 2500;
+      let top = -Infinity, topLow = -Infinity, topRing = -Infinity, all = 0, band = 0, below = 0, above = 0;
+      for (let k = 0; k < h.n; k++) {
+        const f = (k + 1) * f0, p = Math.pow(10, h.db[k] / 10);
+        if (h.db[k] > top) top = h.db[k];
+        if (f < 2000) topLow = Math.max(topLow, h.db[k]);
+        else if (f < 4000) topRing = Math.max(topRing, h.db[k]);
+        if (f < 5000) all += p;
+        if (f >= 2400 && f <= 3800) band += p;
+        if (f < 1000) below += p;
+        else if (f < 5000) above += p;
+      }
+      if (topRing > -Infinity && topLow > -Infinity) t.spr[i] = topRing - topLow;
+      if (all > 0 && band > 0) t.ringDb[i] = 10 * Math.log10(band / all);
+      if (below > 0 && above > 0) t.alphaRatio[i] = 10 * Math.log10(above / below);
+      let Sw = 0, Swx = 0, Swxx = 0, Swr = 0, Swxr = 0, r1 = NaN, r2 = NaN;
+      for (let k = 0; k < h.n; k++) {
+        const f = (k + 1) * f0;
+        if (f > FMAX_SOURCE) break;
+        let tract = resonance(f, F1, 60 + 0.04 * F1) + resonance(f, F2, 90 + 0.02 * F2) + resonance(f, F3, 150);
+        for (let u = 1; u <= 8; u++) tract += resonance(f, Math.max(F3 + 600, 0.7 * ceiling) + (u - 1) * spacing, 200 + 50 * u);
+        // a harmonic sitting right on a formant: how tall the peak is depends on a bandwidth that
+        // is not measured, so no more than 14 dB of lift is taken out
+        const r = h.db[k] - Math.min(14, tract);
+        if (k === 0) r1 = r;
+        if (k === 1) r2 = r;
+        // a harmonic far below the strongest is mostly noise: it says little about the slope. And
+        // the first harmonic is the source's own (a breathy voice lifts it alone): it is left out
+        // when there are enough others
+        let w = h.db[k] > top - 30 ? 1 : 0.2;
+        if (k === 0 && f0 * 5 < FMAX_SOURCE) w = 0;
+        const xk = Math.log2(f / 1000);
+        Sw += w;
+        Swx += w * xk;
+        Swxx += w * xk * xk;
+        Swr += w * r;
+        Swxr += w * r * xk;
+      }
+      const den = Sw * Swxx - Swx * Swx;
+      t.slope[i] = den > 1e-9 ? Math.max(-30, Math.min(6, (Sw * Swxr - Swx * Swr) / den)) : -9;
+      t.h1h2[i] = Number.isFinite(r1) && Number.isFinite(r2) ? r1 - r2 : 0;
+      // the vowel can be named up to about 550 Hz (checked on real singers); above that the harmonics are too far apart
+      t.sure[i] = Math.max(0, Math.min(1, (700 - f0) / 150));
+      if (ft.f[i * 3] > 0 && ft.f[i * 3 + 1] > 0) t.shape[i] = nearestShape(cb, ft.f[i * 3], ft.f[i * 3 + 1]);
     } else if (t.level[i] > floor) {
       an.spectrum(x, i * HOP, Math.round(0.03 * FS));
       let num = 0, den = 0;
@@ -356,163 +287,28 @@ export function analyze(input: Float32Array, fsIn: number, cb: Codebook, progres
       }
       t.centroid[i] = den > 0 ? ((num / den) * FS) / 2048 : 0;
     }
+    if ((i & 2047) === 0) progress?.("Measuring the harmonics", 0.4 + 0.5 * (i / n));
   }
 
-  // ---- the singer's tract length: the factor that lets the plain shapes fit best overall
-  progress?.("Sizing the vocal tract", 0.3);
-  const m = new Matcher(cb);
-  const strong: number[] = [];
-  for (let i = 0; i < n; i++) if (t.f0[i] > 0 && t.periodicity[i] > 0.8 && t.level[i] > loud - 22 && hn[i] >= 6) strong.push(i);
-  const pick = strong.length > 320 ? strong.filter((_, i) => i % Math.ceil(strong.length / 320) === 0) : strong;
-  let alpha = opts.alpha ?? 1;
-  if (opts.alpha === undefined && pick.length >= 12) {
-    let best = Infinity;
-    for (let a = 0.82; a <= 1.241; a += 0.02) {
-      let sum = 0;
-      for (const i of pick) {
-        m.prepare(t.f0[i], hdb.subarray(i * MAX_HARMONICS, (i + 1) * MAX_HARMONICS), hn[i], a);
-        let mn = Infinity;
-        for (let b = 0; b < cb.nBase; b++) {
-          const c = m.cost(b * cb.nVar + cb.plain);
-          if (c < mn) mn = c;
-        }
-        sum += Math.sqrt(mn);
-      }
-      if (sum < best) {
-        best = sum;
-        alpha = a;
-      }
-    }
-  }
-  t.alpha = alpha;
-
-  // ---- candidates per voiced frame: the best plain shapes, then their larynx and twang variants
-  progress?.("Matching mouth shapes", 0.4);
-  const cCost = new Float32Array(n * TOP).fill(Infinity), cEntry = new Int32Array(n * TOP).fill(-1), cSlope = new Float32Array(n * TOP);
-  const aCost = new Float32Array(STAGE_A), aBase = new Int32Array(STAGE_A);
-  for (let i = 0; i < n; i++) {
-    if (!(t.f0[i] > 0)) continue;
-    const K = m.prepare(t.f0[i], hdb.subarray(i * MAX_HARMONICS, (i + 1) * MAX_HARMONICS), hn[i], alpha);
-    if (K < 3) continue;
-    aCost.fill(Infinity);
-    aBase.fill(-1);
-    for (let b = 0; b < cb.nBase; b++) {
-      const c = m.cost(b * cb.nVar + cb.plain);
-      if (c >= aCost[STAGE_A - 1]) continue;
-      let j = STAGE_A - 1;
-      while (j > 0 && aCost[j - 1] > c) {
-        aCost[j] = aCost[j - 1];
-        aBase[j] = aBase[j - 1];
-        j--;
-      }
-      aCost[j] = c;
-      aBase[j] = b;
-    }
-    for (let j = 0; j < STAGE_A; j++) {
-      if (aBase[j] < 0) continue;
-      for (let v = 0; v < cb.nVar; v++) {
-        const e = aBase[j] * cb.nVar + v;
-        // a small price on moving the larynx from the singer's usual height, and on twang: each must earn its place
-        const c = m.cost(e) + prior(cb, v);
-        keep(cCost, cEntry, cSlope, i * TOP, c, e, m.slope);
-      }
-    }
-    if ((i & 1023) === 0) progress?.("Matching mouth shapes", 0.4 + 0.4 * (i / n));
-  }
-
-  // ---- one path through the candidates: shapes change smoothly
-  progress?.("Following the movement", 0.82);
-  const MOVE = 7;
-  const move = [1, 1, 1, 0, 0, 0, 0.5, 1, 1, 0.5, 0, 0, 0.7, 0.8, 0, 0, 0]; // per articulator key
-  const range = [2.7, 3.8, 4.4, 1, 1, 1, 2, 2.8, 1.7, 1, 1, 1, 3.2, 1, 1, 1, 1];
-  const dist = (e1: number, e2: number): number => {
-    let sum = 0;
-    for (let k = 0; k < nKeys; k++) {
-      if (!move[k]) continue;
-      const d = (cb.artic[e1 * nKeys + k] - cb.artic[e2 * nKeys + k]) / range[k];
-      sum += move[k] * d * d;
-    }
-    return Math.sqrt(sum);
-  };
-  // runs of matched frames; a gap of more than 150 ms starts a new one (the mouth had time to go anywhere)
-  const runs: number[][] = [];
-  let last = -1000;
-  for (let i = 0; i < n; i++) {
-    if (cEntry[i * TOP] < 0) continue;
-    if (i - last > 15) runs.push([]);
-    runs[runs.length - 1].push(i);
-    last = i;
-  }
-  for (const run of runs) {
-    const L = run.length;
-    const acc = new Float32Array(L * TOP).fill(Infinity), back = new Int8Array(L * TOP).fill(-1);
-    for (let k = 0; k < TOP; k++) acc[k] = cCost[run[0] * TOP + k];
-    for (let s = 1; s < L; s++) {
-      const i = run[s], pi = run[s - 1];
-      for (let k = 0; k < TOP; k++) {
-        const e = cEntry[i * TOP + k];
-        if (e < 0) continue;
-        let best = Infinity, bj = -1;
-        for (let j = 0; j < TOP; j++) {
-          const pa = acc[(s - 1) * TOP + j];
-          if (pa === Infinity) continue;
-          const c = pa + MOVE * dist(cEntry[pi * TOP + j], e);
-          if (c < best) {
-            best = c;
-            bj = j;
-          }
-        }
-        acc[s * TOP + k] = best + cCost[i * TOP + k];
-        back[s * TOP + k] = bj;
-      }
-    }
-    let k = 0;
-    for (let j = 1; j < TOP; j++) if (acc[(L - 1) * TOP + j] < acc[(L - 1) * TOP + k]) k = j;
-    for (let s = L - 1; s >= 0; s--) {
-      const i = run[s];
-      const e = cEntry[i * TOP + k];
-      t.entry[i] = e;
-      t.shape[i] = Math.floor(e / cb.nVar);
-      t.fit[i] = Math.sqrt(Math.max(0, cCost[i * TOP + k] - prior(cb, e % cb.nVar)));
-      t.slope[i] = cSlope[i * TOP + k];
-      if (s > 0) k = back[s * TOP + k];
-    }
-  }
-
-  finish(t, cb, m, hdb, hn, loud, floor);
+  finish(t, cb, loud, floor);
   progress?.("Done", 1);
   return t;
 }
 
-/** Everything after the path is chosen: postures, formants, source measures, vibrato, kinds. */
-function finish(t: VoiceTrack, cb: Codebook, m: Matcher, hdb: Float32Array, hn: Uint8Array, loud: number, floor: number): void {
+/** Everything after the measuring: postures, vowel names, vibrato, kinds, and the scales. */
+function finish(t: VoiceTrack, cb: Codebook, loud: number, floor: number): void {
   const n = t.n, nKeys = cb.keys.length;
-  // source measures against the chosen shape
-  for (let i = 0; i < n; i++) {
-    const e = t.entry[i];
-    if (e < 0) continue;
-    m.prepare(t.f0[i], hdb.subarray(i * MAX_HARMONICS, (i + 1) * MAX_HARMONICS), hn[i], t.alpha);
-    t.h1h2[i] = m.h1h2(e);
-    for (let k = 0; k < 3; k++) t.formants[i * 3 + k] = cb.formants[e * 3 + k] * t.alpha;
-    t.twang[i] = cb.variants[e % cb.nVar].twang;
-    t.larynx[i] = cb.variants[e % cb.nVar].larynx;
-    // ring: measured, and against the same shape and larynx height without twang
-    const lx = cb.variants[e % cb.nVar].larynx;
-    const noTwang = cb.variants.findIndex((v) => v.larynx === lx && v.twang <= 0.11);
-    const r = m.ring(Math.floor(e / cb.nVar) * cb.nVar + noTwang);
-    t.ringDb[i] = Number.isNaN(r.share) ? -60 : r.share;
-    t.ringExcess[i] = Number.isNaN(r.boost) ? 0 : r.boost;
-  }
-  // postures: the matched one where voiced, held through gaps, then smoothed over 50 ms
+  // postures: the nearest shape where sung, held through gaps, then smoothed over 70 ms
   const raw = new Float32Array(n * nKeys);
-  let lastE = -1;
-  for (let i = 0; i < n; i++) if (t.entry[i] >= 0) {
-    lastE = t.entry[i];
-    break;
-  }
+  let last = -1;
+  for (let i = 0; i < n; i++)
+    if (t.shape[i] >= 0) {
+      last = t.shape[i];
+      break;
+    }
   for (let i = 0; i < n; i++) {
-    if (t.entry[i] >= 0) lastE = t.entry[i];
-    if (lastE >= 0) for (let k = 0; k < nKeys; k++) raw[i * nKeys + k] = cb.artic[lastE * nKeys + k];
+    if (t.shape[i] >= 0) last = t.shape[i];
+    if (last >= 0) for (let k = 0; k < nKeys; k++) raw[i * nKeys + k] = cb.artic[last * nKeys + k];
   }
   const R = 3;
   for (let i = 0; i < n; i++) {
@@ -523,27 +319,15 @@ function finish(t: VoiceTrack, cb: Codebook, m: Matcher, hdb: Float32Array, hn: 
       t.artic[i * nKeys + k] = s / (b - a + 1);
     }
   }
-  smoothVoiced(t.twang, t.f0, 6);
-  smoothVoiced(t.ringDb, t.f0, 4);
-  smoothVoiced(t.ringExcess, t.f0, 6);
-  smoothVoiced(t.larynx, t.f0, 8);
-  smoothVoiced(t.slope, t.f0, 3);
-  smoothVoiced(t.h1h2, t.f0, 3);
-  smoothVoiced(t.hnrLow, t.f0, 3);
-  for (let i = 0; i < n; i++) if (Number.isNaN(t.hnrHigh[i])) t.hnrHigh[i] = t.f0[i] > 0 ? -1000 : 0;
-  smoothVoiced(t.hnrHigh, t.f0, 3);
-  for (let i = 0; i < n; i++) if (t.hnrHigh[i] < -100) t.hnrHigh[i] = NaN;
-  smoothVoiced(t.sub, t.f0, 3);
+  for (const v of [t.slope, t.h1h2, t.nhrLow, t.nhrHigh, t.sub, t.spr, t.ringDb, t.alphaRatio]) smoothVoiced(v, t.f0, 3);
 
   nameVowels(t, cb);
 
   // the note's centre and the vibrato around it
-  const centre = medianVoiced(t.f0, 21);
-  vibrato(t, centre);
+  vibrato(t);
 
   // kinds
   for (let i = 0; i < n; i++) t.kind[i] = t.f0[i] > 0 ? KIND.voiced : t.level[i] > Math.max(floor, loud - 45) ? KIND.noise : KIND.silence;
-  // an in-breath: 150 ms to 1.2 s of soft, not-hissy noise that leads into singing
   for (let i = 0; i < n; ) {
     if (t.kind[i] !== KIND.noise) {
       i++;
@@ -558,35 +342,31 @@ function finish(t: VoiceTrack, cb: Codebook, m: Matcher, hdb: Float32Array, hn: 
     const len = j - i;
     let leads = false;
     for (let k = j; k < Math.min(n, j + 30); k++) if (t.kind[k] === KIND.voiced) leads = true;
+    // an in-breath: 150 ms to 1.2 s of soft, not-hissy noise that leads into singing
     if (len >= 15 && len <= 120 && cen / len < 3000 && lev / len < loud - 14 && leads) for (let k = i; k < j; k++) t.kind[k] = KIND.breath;
+    // a harsh sound: at least 120 ms as loud as the singing, with no steady pitch and not a hiss
+    else if (len >= 12 && cen / len < 3200 && lev / len > loud - 14) for (let k = i; k < j; k++) t.kind[k] = KIND.harsh;
     i = j;
   }
   interpret(t);
 }
 
 /**
- * Name each frame's vowel, steadily: neighbouring shapes take turns as the best match within one
- * held vowel, so each frame takes the name most frequent over the 200 ms around it, and a name
- * that lasts under 80 ms joins its longer neighbour.
+ * Name each frame's vowel, steadily: the formants wander a little within one held vowel, so each
+ * frame takes the name most frequent over the 200 ms around it, and a name that lasts under
+ * 80 ms joins its longer neighbour.
  */
 function nameVowels(t: VoiceTrack, cb: Codebook): void {
   const n = t.n;
-  const names: string[] = [], ipas: string[] = [];
-  const raw = new Uint8Array(n).fill(255);
+  const female = Math.max(0, Math.min(1, cb.body.female + cb.body.child));
+  const raw = new Uint8Array(n).fill(255), near = new Uint8Array(n).fill(255);
   for (let i = 0; i < n; i++) {
     if (t.shape[i] < 0) continue;
-    const s = cb.base[t.shape[i]];
-    const ipa = s.t < 0.5 ? s.a : s.b;
-    const w = vowelWord(ipa);
-    let k = names.indexOf(w);
-    if (k < 0) {
-      k = names.length;
-      names.push(w);
-      ipas.push(ipa);
-    }
-    raw[i] = k;
+    const v = nameVowel(t.formants[i * 3], t.formants[i * 3 + 1], female);
+    raw[i] = v.vowel;
+    near[i] = v.near;
   }
-  const count = new Uint16Array(Math.max(1, names.length));
+  const count = new Uint16Array(SUNG_VOWELS.length);
   const R = 10;
   for (let i = 0; i < n; i++) {
     if (raw[i] === 255) continue;
@@ -600,6 +380,8 @@ function nameVowels(t: VoiceTrack, cb: Codebook): void {
       if (count[v] > count[best]) best = v;
     }
     t.vowel[i] = best;
+    // "between two" only if this frame said so of the same pair
+    t.vowelNear[i] = raw[i] === best ? near[i] : near[i] === best ? raw[i] : 255;
   }
   for (let i = 0; i < n; ) {
     if (t.vowel[i] === 255) {
@@ -615,8 +397,6 @@ function nameVowels(t: VoiceTrack, cb: Codebook): void {
     }
     i = j;
   }
-  t.vowelNames = names;
-  t.vowelIpa = ipas;
 }
 
 /** Moving average over ±r frames, within voiced runs only. */
@@ -635,36 +415,87 @@ function smoothVoiced(v: Float32Array, f0: Float32Array, r: number): void {
   }
 }
 
-/** Vibrato per frame from the pitch's swing around the note's centre over half a second. */
-function vibrato(t: VoiceTrack, centre: Float32Array): void {
-  const n = t.n, R = 25;
+/**
+ * Vibrato per frame, and the note's centre. Over the 700 ms around the frame the pitch (in cents,
+ * with its slow drift taken out) must repeat itself at a period between 1/8 and 1/4.5 of a
+ * second: its autocorrelation there at least 0.5. A pitch that merely wanders, or steps from note
+ * to note, does not. The extent is the swing's size, each way. Where there is vibrato the note's
+ * centre is the mean pitch over two whole swings (which cancels the swing exactly); elsewhere it
+ * is the middle pitch of the 0.4 s around the frame.
+ */
+function vibrato(t: VoiceTrack): void {
+  const n = t.n, R = 35;
+  const dt = t.hop;
+  const centre = medianVoiced(t.f0, 21);
   const cents = new Float32Array(n);
-  for (let i = 0; i < n; i++) cents[i] = t.f0[i] > 0 && centre[i] > 0 ? 1200 * Math.log2(t.f0[i] / centre[i]) : NaN;
+  for (let i = 0; i < n; i++) cents[i] = t.f0[i] > 0 ? 1200 * Math.log2(t.f0[i] / 440) : NaN;
+  // drift out: the mean over a quarter of a second (longer than any vibrato's period)
+  const flat = new Float32Array(n).fill(NaN);
+  const D = 12;
+  for (let i = 0; i < n; i++) {
+    if (Number.isNaN(cents[i])) continue;
+    let s = 0, c = 0;
+    for (let j = Math.max(0, i - D); j <= Math.min(n - 1, i + D); j++)
+      if (!Number.isNaN(cents[j])) {
+        s += cents[j];
+        c++;
+      }
+    flat[i] = cents[i] - s / c;
+  }
+  const lagMin = Math.round(1 / 8 / dt), lagMax = Math.round(1 / 4.5 / dt);
+  const len = 2 * R + 1;
+  const buf = new Float32Array(len);
   for (let i = 0; i < n; i++) {
     t.note[i] = centre[i];
     if (!(t.f0[i] > 0)) continue;
-    const a = Math.max(0, i - R), b = Math.min(n - 1, i + R);
-    let cnt = 0, mean = 0;
-    for (let j = a; j <= b; j++) if (!Number.isNaN(cents[j])) {
-      mean += cents[j];
-      cnt++;
-    }
-    if (cnt < 0.85 * (b - a + 1) || cnt < 30) continue;
-    mean /= cnt;
-    let ss = 0, cross = 0, prev = 0;
+    const a = i - R, b = i + R;
+    if (a < 0 || b >= n) continue;
+    let ok = true, ss = 0;
     for (let j = a; j <= b; j++) {
-      if (Number.isNaN(cents[j])) continue;
-      const d = cents[j] - mean;
-      ss += d * d;
-      if (prev !== 0 && d !== 0 && Math.sign(d) !== Math.sign(prev)) cross++;
-      if (d !== 0) prev = d;
+      const v = flat[j];
+      if (Number.isNaN(v)) {
+        ok = false;
+        break;
+      }
+      buf[j - a] = v;
+      ss += v * v;
     }
-    const rate = cross / 2 / (cnt * t.hop);
-    const extent = Math.sqrt((2 * ss) / cnt);
-    // a regular swing between 4 and 8.5 times a second, at least an eighth of a semitone each way
-    if (rate >= 4 && rate <= 8.5 && extent >= 12 && extent <= 150) {
-      t.vibRate[i] = rate;
-      t.vibExtent[i] = extent;
+    if (!ok || !(ss > 0)) continue;
+    let best = 0, bestLag = 0;
+    const rs = new Float32Array(lagMax + 2);
+    for (let lag = lagMin - 1; lag <= lagMax + 1; lag++) {
+      let num = 0, e1 = 0, e2 = 0;
+      for (let j = 0; j + lag < len; j++) {
+        num += buf[j] * buf[j + lag];
+        e1 += buf[j] * buf[j];
+        e2 += buf[j + lag] * buf[j + lag];
+      }
+      rs[lag] = num / Math.sqrt(e1 * e2 + 1e-9);
+      if (lag >= lagMin && lag <= lagMax && rs[lag] > best) {
+        best = rs[lag];
+        bestLag = lag;
+      }
     }
+    if (best < 0.5) continue;
+    // the period to a fraction of a frame: the top of a parabola through the best lag and its neighbours
+    const y0 = rs[bestLag - 1], y1 = rs[bestLag], y2 = rs[bestLag + 1];
+    const den = y0 - 2 * y1 + y2;
+    const period = bestLag + (den < 0 ? Math.max(-0.5, Math.min(0.5, (0.5 * (y0 - y2)) / den)) : 0);
+    // taking the drift out as a mean over W frames leaves a swing of period P larger by 1 − sinc(W/P): undo it
+    // and each pitch estimate is a mean over the tracker's window, which shrinks the swing by sinc(window/P)
+    const w = (Math.PI * (2 * D + 1)) / period, u = (Math.PI * PITCH_WINDOW) / (period * dt);
+    const extent = Math.sqrt((2 * ss) / len) / (1 - Math.sin(w) / w) / (Math.sin(u) / u);
+    if (extent < 15 || extent > 200) continue;
+    t.vibRate[i] = 1 / (period * dt);
+    t.vibExtent[i] = extent;
+    // the centre: the mean over two whole swings (the ends weighted for the fraction of a frame)
+    const half = period, k = Math.floor(half);
+    let s = cents[i], c = 1;
+    for (let j = 1; j <= k + 1; j++) {
+      const wj = j <= k ? 1 : half - k;
+      s += wj * (cents[i - j] + cents[i + j]);
+      c += 2 * wj;
+    }
+    t.note[i] = 440 * Math.pow(2, s / c / 1200);
   }
 }

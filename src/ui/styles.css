@@ -3319,7 +3319,9 @@ input[type="range"]::-moz-range-thumb {
 }
 
 .an-big-sub {
-  min-height: 1.3em;
+  /* room for two lines always: the text changes as the recording plays, and the panel must not change height with it */
+  min-height: 2.8em;
+  line-height: 1.4;
   font-size: 9.5px;
   letter-spacing: 0.12em;
   text-transform: uppercase;
@@ -3327,7 +3329,7 @@ input[type="range"]::-moz-range-thumb {
 }
 
 .an-words {
-  min-height: 1.5em;
+  min-height: 3em;
   color: #f1f8fb !important;
 }
 

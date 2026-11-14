@@ -47,7 +47,12 @@ export const articulatorSlots: SlotsFn = (m, a, f, formants) => [
   f.velumPort > 0.02 ? { label: "Soft palate", value: f.velumPort.toFixed(2), unit: "cm²", color: V.white } : { label: "Soft palate", value: "Shut", color: V.white },
 ];
 
-export function AnatomyView(props: { slots?: SlotsFn; info?: InfoFn; showFormants?: boolean; overlay?: OverlayFn }) {
+/** Formants to show in place of the drawn shape's own (a recording's, as measured); null: the shape's. */
+export type FormantsFn = () => number[] | null;
+
+export function AnatomyView(props: { slots?: SlotsFn; info?: InfoFn; showFormants?: boolean; overlay?: OverlayFn; formants?: FormantsFn }) {
+  const measuredRef = useRef<FormantsFn | undefined>(props.formants);
+  measuredRef.current = props.formants;
   const overlayRef = useRef<OverlayFn | undefined>(props.overlay);
   overlayRef.current = props.overlay;
   const formantsRef = useRef(props.showFormants ?? true);
@@ -102,6 +107,8 @@ export function AnatomyView(props: { slots?: SlotsFn; info?: InfoFn; showFormant
       if (m && w > 0 && h > 0) {
         const f = m.frame(a);
         if (++fTick % 4 === 0 || formants.length === 0) formants = m.transfer(a).formants;
+        // a recording's formants are measured: they are shown, not the ones the drawn shape would give
+        const shown = measuredRef.current ? (measuredRef.current() ?? []) : formants;
         const info = infoRef.current(m, f, tele);
         // recording a clip: the head without the measurements
         const clean = recording.on;
@@ -111,7 +118,7 @@ export function AnatomyView(props: { slots?: SlotsFn; info?: InfoFn; showFormant
         ctx.fillRect(0, 0, canvas.width, canvas.height);
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
         const view = clean ? { ...st.view, calipers: false, grid: false } : st.view;
-        r.draw(ctx, m, f, a, tele, view, { hover: hoverRef.current, drag: dragRef.current?.id ?? null, dt, formants: formantsRef.current && !clean ? formants : [], slots: clean ? [] : slotsRef.current(m, a, f, formants, tele), info: clean ? [] : info.map((s) => s.toUpperCase()) });
+        r.draw(ctx, m, f, a, tele, view, { hover: hoverRef.current, drag: dragRef.current?.id ?? null, dt, formants: formantsRef.current && !clean ? shown : [], slots: clean ? [] : slotsRef.current(m, a, f, formants, tele), info: clean ? [] : info.map((s) => s.toUpperCase()) });
         overlayRef.current?.(ctx, r, m, f, a, { w, h, dt });
         glow.apply(canvas, ctx, dpr);
       }

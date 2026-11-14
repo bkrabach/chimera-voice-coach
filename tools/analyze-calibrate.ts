@@ -1,7 +1,9 @@
 /**
  * How Analyze reads the engine's own singing: render notes with known settings (vowel, pitch,
  * voice quality, twang, larynx), analyse each, and print what came back beside what went in.
- * The scales in src/analyze/interpret.ts were set from this table.
+ * The scales are fitted to real singers (tools/eval/fit.py), not to this table: it shows how the
+ * synthesizer reads on them, which is what a singer at Coach's microphone is set beside.
+ * tools/coach-takes.ts prints the same for the lessons' own takes.
  *
  * Usage: bun tools/analyze-calibrate.ts [male|female] [--wav dir]
  */
@@ -10,7 +12,7 @@ import { OfflineVoice } from "./lib/voice.ts";
 import { writeWav } from "./lib/wav.ts";
 
 await initEngine();
-const { buildCodebook, baseVowel } = await import("../src/analyze/codebook.ts");
+const { buildCodebook } = await import("../src/analyze/codebook.ts");
 const { analyze } = await import("../src/analyze/analyze.ts");
 const { VoiceModel } = await import("../src/ui/analysis.ts");
 const { resolveShape } = await import("../src/coach/shape.ts");
@@ -23,7 +25,7 @@ const fs = 48000;
 
 let t0 = performance.now();
 const cb = await buildCodebook(body);
-console.log(`codebook: ${cb.nBase} shapes × ${cb.nVar} variants in ${((performance.now() - t0) / 1000).toFixed(1)} s`);
+console.log(`${cb.n} shapes to draw, built in ${((performance.now() - t0) / 1000).toFixed(1)} s`);
 const vm = new VoiceModel(body, fs);
 
 const median = (v: number[]) => {
@@ -67,33 +69,29 @@ function report(c: Case, t: Awaited<ReturnType<typeof analyze>>, at: number) {
   let frames = 0;
   for (let i = f0 + 45; i < f0 + 115; i++) {
     frames++;
-    if (t.f0[i] > 0 && t.entry[i] >= 0) idx.push(i);
+    if (t.f0[i] > 0 && t.shape[i] >= 0) idx.push(i);
   }
-  const med = (a: Float32Array) => median(idx.map((i) => a[i]));
+  const med = (a: Float32Array, k = 1, o = 0) => median(idx.map((i) => a[i * k + o]));
   const vowels = new Map<string, number>();
-  for (const i of idx) vowels.set(baseVowel(cb, t.shape[i]), (vowels.get(baseVowel(cb, t.shape[i])) ?? 0) + 1);
+  for (const i of idx) if (t.vowel[i] !== 255) vowels.set(t.vowelNames[t.vowel[i]], (vowels.get(t.vowelNames[t.vowel[i]]) ?? 0) + 1);
   const top = [...vowels.entries()].sort((a, b) => b[1] - a[1])[0];
   return {
     case: c.name,
     voiced: `${idx.length}/${frames}`,
     f0: +med(t.f0).toFixed(0),
     vowel: top ? `${top[0]} ${Math.round((100 * top[1]) / idx.length)}%` : "-",
-    twang: +med(t.twang).toFixed(2),
-    ringDb: +med(t.ringDb).toFixed(1),
-    ringX: +med(t.ringExcess).toFixed(1),
-    larynx: +med(t.larynx).toFixed(2),
-    fit: +med(t.fit).toFixed(1),
+    F1: +med(t.formants, 3, 0).toFixed(0),
+    F2: +med(t.formants, 3, 1).toFixed(0),
     slope: +med(t.slope).toFixed(1),
     h1h2: +med(t.h1h2).toFixed(1),
-    hnrLo: +med(t.hnrLow).toFixed(1),
-    hnrHi: +med(t.hnrHigh).toFixed(1),
+    spr: +med(t.spr).toFixed(1),
+    nhrLo: +med(t.nhrLow).toFixed(1),
+    nhrHi: +med(t.nhrHigh).toFixed(1),
     sub: +med(t.sub).toFixed(1),
-    aper: +(100 * (1 - med(t.periodicity))).toFixed(1),
-    dbl: +(100 * med(t.doubling)).toFixed(1),
-    breath: +med(t.breath).toFixed(2),
     press: +med(t.press).toFixed(2),
+    ring: +med(t.ring).toFixed(2),
+    breath: +med(t.breath).toFixed(2),
     grit: +med(t.grit).toFixed(2),
-    weight: +med(t.weight).toFixed(2),
   };
 }
 
@@ -124,4 +122,4 @@ t0 = performance.now();
 const track = analyze(all, fs, cb);
 const secs = (performance.now() - t0) / 1000;
 console.table(cases.map((c, i) => report(c, track, i)));
-console.log(`tract factor ${track.alpha.toFixed(2)}; analysed ${(all.length / fs).toFixed(0)} s of sound in ${secs.toFixed(1)} s`);
+console.log(`analysed ${(all.length / fs).toFixed(0)} s of sound in ${secs.toFixed(1)} s`);

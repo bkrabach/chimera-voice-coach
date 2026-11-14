@@ -23,8 +23,6 @@ interface AnalyzeState {
   /** the file's name, or "Demo" */
   name: string | null;
   track: VoiceTrack | null;
-  /** the vowel each matched shape is nearest to (indexed by VoiceTrack.shape) */
-  vowelOf: string[];
   /** what was sung when, where that is known (the demo) */
   marks: Mark[];
   playing: boolean;
@@ -138,13 +136,13 @@ const stageOf = (id: number) => (stage: string, fraction: number) => {
   if (id === request) useAnalyze.setState({ stage, progress: fraction });
 };
 
-function setTrack(track: VoiceTrack, vowelOf: string[], body: BodyMix): void {
+function setTrack(track: VoiceTrack, body: BodyMix): void {
   trackBody = body;
   const lv: number[] = [];
   for (let i = 0; i < track.n; i++) if (track.kind[i] === KIND.voiced) lv.push(track.level[i]);
   lv.sort((a, b) => a - b);
   loud = lv.length ? lv[Math.floor(lv.length * 0.95)] : -20;
-  useAnalyze.setState({ track, vowelOf, status: "ready", stage: "", progress: 1, error: null });
+  useAnalyze.setState({ track, status: "ready", stage: "", progress: 1, error: null });
 }
 
 const fail = (e: unknown) => useAnalyze.setState({ status: "error", error: e instanceof Error ? e.message : String(e), playing: false });
@@ -160,11 +158,14 @@ function table(x: number, pts: [number, number][]): number {
 }
 
 /**
- * The engine's source settings that give back a frame's measurements: the inverse of what
- * tools/analyze-calibrate.ts measured (a source slope of −12.9 dB/oct came from tension 0.05, −2 from 0.95, …).
+ * The engine's source settings that read about the same on the scales as a frame does: the inverse
+ * of what tools/coach-takes.ts and tools/analyze-calibrate.ts measure on the engine's own singing
+ * (its falsetto, tension 0.05, reads drive 0.07; flow, 0.5, about 0.3 to 0.7; chest, 0.72, 0.83;
+ * pressed, 0.95, 0.92; breathiness 0.5 reads air 0.65; distortion 0.36 reads grit 0.95). This is
+ * the model voice imitating the recording, not a measurement of the singer's folds.
  */
 export function sourceAt(t: VoiceTrack, i: number, loudDb: number = loud): Partial<VoiceSource> {
-  const tension = table(t.slope[i], [[-13, 0.05], [-11.6, 0.22], [-9.6, 0.5], [-6.5, 0.72], [-4, 0.85], [-2, 0.95]]);
+  const tension = table(t.press[i], [[0.05, 0.05], [0.3, 0.42], [0.55, 0.55], [0.85, 0.72], [0.95, 0.95]]);
   const grit = t.grit[i];
   return {
     f0: t.f0[i],
@@ -172,17 +173,21 @@ export function sourceAt(t: VoiceTrack, i: number, loudDb: number = loud): Parti
     vibratoDepth: 0,
     drift: 0,
     fry: 0,
-    roughness: 0.1,
+    roughness: 0,
     voiced: true,
     tension,
     brightness: 0.1 + 0.5 * t.press[i],
-    breathiness: 0.05 + 0.75 * t.breath[i],
-    distortion: grit > 0.12 ? 0.2 + 0.55 * grit : 0,
+    breathiness: 0.05 + 0.7 * t.breath[i],
+    distortion: grit > 0.4 ? 0.1 + 0.45 * grit : 0,
     pressure: 5 + 8 * clamp01((t.level[i] - (loudDb - 28)) / 28) + 3 * t.press[i],
   };
 }
 
-/** The posture of a frame, with the ring it measured narrowing the twang funnel and its grit drawing the false folds in. */
+/**
+ * The posture drawn for a frame: the shape that gives its measured formants, with the twang funnel
+ * narrowed by its ring and the false folds drawn in by its grit. Those two are how the model makes
+ * ring and grit, drawn so the head shows them; the sound alone does not say how the singer made them.
+ */
 export function articAt(t: VoiceTrack, i: number): Partial<HumanArtic> {
   const a: Record<string, number> = {};
   const nK = t.keys.length;
@@ -220,7 +225,7 @@ function drive(): void {
   const i = frameAt(t, now + LOOK);
   if (t.artic.length) engine.setArtic(articAt(t, i), true);
   const j = frameAt(t, now + 0.01);
-  if (t.f0[j] > 0 && t.entry[j] >= 0) {
+  if (t.f0[j] > 0 && t.shape[j] >= 0) {
     engine.setSource(sourceAt(t, j));
     engine.gate(s.playing ? 1 : 0);
   } else engine.gate(0);
@@ -258,7 +263,7 @@ export async function rematch(): Promise<void> {
   current()?.el.pause();
   try {
     const r = await askWorker({ type: "analyze", id, samples: samples.x.slice(), sampleRate: samples.fs, body }, [], stageOf(id));
-    if (id === request) setTrack(r.track, r.vowelOf, body);
+    if (id === request) setTrack(r.track, body);
   } catch (e) {
     if (id === request) fail(e);
   }
@@ -273,7 +278,6 @@ export const useAnalyze = create<AnalyzeState>((set, get) => ({
   error: null,
   name: null,
   track: null,
-  vowelOf: [],
   marks: [],
   playing: false,
   rate: 1,
@@ -330,7 +334,7 @@ export const useAnalyze = create<AnalyzeState>((set, get) => ({
       applyMix();
       const body = useStore.getState().body;
       const r = await askWorker({ type: "analyze", id, samples: x.slice(), sampleRate: audio.sampleRate, body }, [], stageOf(id));
-      if (id === request) setTrack(r.track, r.vowelOf, body);
+      if (id === request) setTrack(r.track, body);
     } catch (e) {
       if (id === request) fail(e);
     }
@@ -350,7 +354,7 @@ export const useAnalyze = create<AnalyzeState>((set, get) => ({
       players.vocal = makePlayer(encodeWav(r.demo.samples, r.demo.sampleRate));
       set({ hasFull: false, heard: "vocal", marks: r.demo.marks });
       applyMix();
-      setTrack(r.track, r.vowelOf, body);
+      setTrack(r.track, body);
     } catch (e) {
       if (id === request) fail(e);
     }

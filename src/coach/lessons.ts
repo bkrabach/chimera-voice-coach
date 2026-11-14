@@ -3,24 +3,29 @@
  * sings it a few ways so the difference can be seen and heard.
  *
  * The numbers are postures and source settings of the engine (see `Shape`, `VoiceSource`). They
- * were chosen by rendering each take offline and measuring it (tools/coach-probe.ts): a take
- * that claims more ring has more energy at 2.4-3.6 kHz, a breathy one a steeper spectrum, and
- * so on. The wording follows voice science rather than one teaching school.
+ * were chosen by rendering each take offline and measuring it (tools/coach-takes.ts prints what
+ * Analyze reads on every take): a take that claims more ring reads higher on the ring scale, a
+ * breathy one higher on air, and so on. The wording follows voice science rather than one
+ * teaching school.
  */
 import type { VoiceSource } from "../wasm/types.ts";
 import type { Lesson, PatternId, Register, Shape, Step } from "./types.ts";
 
 type Src = Partial<VoiceSource>;
 
-/** Every take starts from this voice; a take's own settings go on top. */
-export const BASE_SOURCE: Src = { glide: 0.05, pressure: 8.5, breathiness: 0.12, tension: 0.5, fry: 0, roughness: 0.1, vibratoDepth: 0, vibratoRate: 5.8, drift: 5, voiced: true, brightness: 0.3, distortion: 0 };
+/**
+ * Every take starts from this voice; a take's own settings go on top. Roughness is 0 (the engine
+ * still varies each cycle a little, as a steady voice does): with more, a clean take read
+ * half-way up the grit scale that real singers set (tools/coach-takes.ts).
+ */
+export const BASE_SOURCE: Src = { glide: 0.05, pressure: 8.5, breathiness: 0.12, tension: 0.5, fry: 0, roughness: 0, vibratoDepth: 0, vibratoRate: 5.8, drift: 5, voiced: true, brightness: 0.3, distortion: 0 };
 
 /** Voice qualities used by several lessons. */
 export const Q = {
   /** folds meeting cleanly, steady breath */
   flow: { pressure: 8.5, breathiness: 0.12, tension: 0.5, brightness: 0.3 },
   /** folds never quite meeting */
-  breathy: { pressure: 7, breathiness: 0.85, tension: 0.15, brightness: 0.1 },
+  breathy: { pressure: 7, breathiness: 0.5, tension: 0.15, brightness: 0.1 },
   /** folds clamped, breath forced past them */
   pressed: { pressure: 14, breathiness: 0, tension: 0.95, brightness: 0.6 },
   /** thick folds, long closed phase */

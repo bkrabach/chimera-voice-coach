@@ -10,7 +10,7 @@ import { create } from "zustand";
 import tapUrl from "../worklet/tap.ts?worker&url";
 import { engine } from "../audio/AudioEngine.ts";
 import { useStore } from "../ui/store.ts";
-import { bodyKey, type BodyMix } from "../ui/body.ts";
+import { bodyKey } from "../ui/body.ts";
 import { askWorker } from "../analyze/client.ts";
 import { articAt, sourceAt } from "../analyze/store.ts";
 import type { VoiceTrack } from "../analyze/analyze.ts";
@@ -76,33 +76,10 @@ let youSince = 0;
 let quietUntil = 0;
 const gather = new Gather();
 let silent = 0;
-/** sung frames since the tract was last sized */
-let sinceSize = 0;
 let waiter: { resolve: (sang: boolean) => void; startBy: number; endBy: number } | null = null;
 let unsubscribe: (() => void)[] = [];
 const targetCache = new Map<string, Record<string, Summary>>();
 let targetKey = "";
-
-// ------------------------------------------------------------------ the singer's tract size
-
-const ALPHA_STORE = "coach.mic.alpha";
-function loadAlpha(body: BodyMix): number | undefined {
-  try {
-    const v = (JSON.parse(localStorage.getItem(ALPHA_STORE) ?? "{}") as Record<string, number>)[bodyKey(body)];
-    return typeof v === "number" && v > 0.7 && v < 1.4 ? v : undefined;
-  } catch {
-    return undefined;
-  }
-}
-function saveAlpha(body: BodyMix, a: number): void {
-  try {
-    const all = JSON.parse(localStorage.getItem(ALPHA_STORE) ?? "{}") as Record<string, number>;
-    all[bodyKey(body)] = a;
-    localStorage.setItem(ALPHA_STORE, JSON.stringify(all));
-  } catch {
-    /* private mode: it is sized again next time */
-  }
-}
 
 // ------------------------------------------------------------------ samples
 
@@ -143,7 +120,6 @@ function endPhrase(keep: boolean): void {
 function frame(t: VoiceTrack, i: number): void {
   if (gather.push(t, i)) {
     silent = 0;
-    sinceSize++;
     if (!useMic.getState().hearing) useMic.setState({ hearing: true });
   } else if (gather.count > 0 && ++silent > 60) endPhrase(true);
 }
@@ -155,7 +131,7 @@ function consume(t: VoiceTrack, base: number): void {
   if (final > lastFinal) lastFinal = final;
   const i = final - base;
   if (i < 0 || i >= t.n) return;
-  const voiced = t.f0[i] > 0 && t.entry[i] >= 0;
+  const voiced = t.f0[i] > 0 && t.shape[i] >= 0;
   if (voiced) {
     engine.setArtic(articAt(t, i), true);
     engine.setSource(sourceAt(t, i, LOUD));
@@ -179,21 +155,6 @@ function consume(t: VoiceTrack, base: number): void {
     const live = useMic.getState().live;
     if (live?.voiced) useMic.setState({ live: { ...live, voiced: false } });
   }
-}
-
-/** Size the singer's tract from the last few seconds of their own singing (not the take's). */
-async function size(body: BodyMix): Promise<void> {
-  const end = written - (written % FRAME);
-  const start = Math.max(end - 6 * FS, youSince - (youSince % FRAME), written - RING + FRAME);
-  if (end - start < 2.5 * FS) return;
-  sinceSize = 0;
-  const x = copy(start, end);
-  const r = await askWorker({ type: "analyze", samples: x, sampleRate: FS, body }, [x.buffer]);
-  let sung = 0;
-  for (let i = 0; i < r.track.n; i++) if (r.track.f0[i] > 0) sung++;
-  if (sung < 150) return;
-  const was = loadAlpha(body);
-  saveAlpha(body, was === undefined ? r.track.alpha : 0.6 * was + 0.4 * r.track.alpha);
 }
 
 async function tick(): Promise<void> {
@@ -225,13 +186,12 @@ async function tick(): Promise<void> {
   try {
     const body = useStore.getState().body;
     const x = copy(start, end);
-    const r = await askWorker({ type: "live", samples: x, sampleRate: FS, body, alpha: loadAlpha(body) }, [x.buffer]);
+    const r = await askWorker({ type: "live", samples: x, sampleRate: FS, body }, [x.buffer]);
     const s = useMic.getState().status;
     if (s === "off" || s === "error") return;
     if (s === "preparing") useMic.setState({ status: "on" });
     // a take that began meanwhile: this chunk heard the speakers
     if (useCoach.getState().playing === null && turn === "you") consume(r.track, start / FRAME);
-    if (sinceSize >= 250 && turn === "you") await size(body);
   } catch (e) {
     fail(e);
   } finally {
@@ -343,7 +303,6 @@ export const useMic = create<MicState>((set, get) => ({
       nodes = { src, tap, listen, sink };
       written = 0;
       lastFinal = -1;
-      sinceSize = 0;
       quietUntil = 0;
       tap.port.onmessage = (e: MessageEvent<Float32Array>) => {
         const c = e.data;

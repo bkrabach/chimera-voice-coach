@@ -15,14 +15,14 @@ export type ToWorker =
   | { type: "analyze"; id: number; samples: Float32Array; sampleRate: number; body: BodyMix }
   /** render the demo for this body, then analyse it */
   | { type: "demo"; id: number; body: BodyMix }
-  /** the last moments of a live voice: no progress reports; `alpha` is the singer's tract factor when known */
-  | { type: "live"; id: number; samples: Float32Array; sampleRate: number; body: BodyMix; alpha?: number }
+  /** the last moments of a live voice: no progress reports */
+  | { type: "live"; id: number; samples: Float32Array; sampleRate: number; body: BodyMix }
   /** sing each take of a lesson (at `notes[take.id]`, MIDI) and measure it */
   | { type: "targets"; id: number; body: BodyMix; lesson: Lesson; notes: Record<string, number> };
 
 export type FromWorker =
   | { type: "progress"; id: number; stage: string; fraction: number }
-  | { type: "done"; id: number; track: VoiceTrack; vowelOf: string[]; demo?: { samples: Float32Array; sampleRate: number; marks: Mark[] } }
+  | { type: "done"; id: number; track: VoiceTrack; demo?: { samples: Float32Array; sampleRate: number; marks: Mark[] } }
   | { type: "targets"; id: number; targets: Record<string, Summary> }
   | { type: "error"; id: number; message: string };
 
@@ -39,7 +39,7 @@ async function book(body: BodyMix, say: (stage: string, fraction: number) => voi
   const key = `${body.female},${body.child}`;
   let cb = books.get(key);
   if (!cb) {
-    cb = await buildCodebook(body, (f) => say("Building the shapes to match against", f), tick);
+    cb = await buildCodebook(body, (f) => say("Building the shapes to draw", f), tick);
     books.set(key, cb);
   }
   return cb;
@@ -55,19 +55,13 @@ async function run(m: ToWorker): Promise<void> {
   const say = (stage: string, fraction: number) => scope.postMessage({ type: "progress", id: m.id, stage, fraction });
   if (m.type !== "live") say("Loading the voice model", 0);
   await initChimera();
-  // these call into the engine as they load
-  const { baseVowel } = await import("./codebook.ts");
+  // this calls into the engine as it loads
   const { analyze } = await import("./analyze.ts");
   const cb = await book(m.body, say);
-  const vowelOf = (): string[] => {
-    const out: string[] = [];
-    for (let b = 0; b < cb.nBase; b++) out.push(baseVowel(cb, b));
-    return out;
-  };
 
   if (m.type === "live") {
-    const track = analyze(m.samples, m.sampleRate, cb, undefined, { alpha: m.alpha, floorDb: LIVE_FLOOR });
-    scope.postMessage({ type: "done", id: m.id, track, vowelOf: [] }, buffers(track));
+    const track = analyze(m.samples, m.sampleRate, cb, undefined, { floorDb: LIVE_FLOOR });
+    scope.postMessage({ type: "done", id: m.id, track }, buffers(track));
     return;
   }
 
@@ -86,8 +80,7 @@ async function run(m: ToWorker): Promise<void> {
       const v = new EngineVoice(chimeraModule(), fs, m.body);
       const x = renderTake(v, vm, m.lesson, take, m.notes[take.id]);
       v.free();
-      // the engine's own voice in this body: its tract factor is 1 by construction
-      const s = summarize(analyze(x, fs, cb, undefined, { alpha: 1 }));
+      const s = summarize(analyze(x, fs, cb));
       if (s) targets[take.id] = s;
     }
     scope.postMessage({ type: "targets", id: m.id, targets });
@@ -108,7 +101,7 @@ async function run(m: ToWorker): Promise<void> {
     sampleRate = m.sampleRate;
   }
   const track = analyze(samples, sampleRate, cb, say);
-  scope.postMessage({ type: "done", id: m.id, track, vowelOf: vowelOf(), demo }, buffers(track));
+  scope.postMessage({ type: "done", id: m.id, track, demo }, buffers(track));
 }
 
 /** one request at a time, in the order they came (a live chunk must not overtake a codebook being built) */

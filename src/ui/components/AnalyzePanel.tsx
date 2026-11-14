@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useStore } from "../store.ts";
-import { KIND, type VoiceTrack } from "../../analyze/analyze.ts";
+import { isSung, KIND, type VoiceTrack } from "../../analyze/analyze.ts";
 import { read } from "../../analyze/describe.ts";
 import { enterAnalyze, frameAt, leaveAnalyze, position, rematch, useAnalyze } from "../../analyze/store.ts";
 import { drawCallouts, mouthCaption } from "../../coach/callouts.ts";
@@ -31,23 +31,37 @@ export const analyzeOverlay: OverlayFn = (ctx, r, m, f, a, size) => {
   if (t.kind[i] === KIND.breath) {
     parts.push("breath");
     mouthCaption(ctx, r, f, k, [{ text: "BREATH IN", color: V.white, size: 14 }]);
-  } else if (t.kind[i] === KIND.voiced && t.entry[i] >= 0) {
-    if (t.grit[i] > 0.3) parts.push("falseFolds");
-    if (t.ring[i] > 0.4) parts.push("twang");
+  } else if (t.kind[i] === KIND.harsh) {
+    mouthCaption(ctx, r, f, k, [{ text: "HARSH", color: V.red, size: 14 }]);
+  } else if (isSung(t, i)) {
+    // The twang funnel and the false folds are not pointed at, however much ring or grit there is:
+    // the sound does not say which part made it (Coach's lessons, where it is known, do point).
     if (t.press[i] > 0.85 || t.breath[i] > 0.5) parts.push("folds");
-    if (Math.abs(t.larynx[i]) > 0.4) parts.push("larynx");
-    // where it would be felt: ring in the mask, a light voice up high in the head, a heavy one low in the chest
-    const midi = 69 + 12 * Math.log2(t.f0[i] / 440);
+    // ring is felt in the mask; chest and head are not marked, since the sound alone does not say which register it is
     if (t.ring[i] > 0.45) zones.push("mask");
-    else if (t.press[i] < 0.25 && midi > 62) zones.push("head");
-    else if (t.press[i] > 0.6 && midi < 64) zones.push("chest");
     const rd = read(t, i);
     mouthCaption(ctx, r, f, k, [
-      { text: t.vowel[i] === 255 ? "" : t.vowelNames[t.vowel[i]], color: V.green, size: 22 },
+      { text: vowelText(t, i), color: V.green, size: 22 },
       { text: rd.note, color: V.amber, size: 15 },
     ]);
   }
   drawCallouts(ctx, r, m, f, a, size.dt, parts, zones, s.playing);
+};
+
+/** The vowel at a frame: its name, or the two it lies between ("AH/OH"); "?" where the pitch is too high to tell. */
+export function vowelText(t: VoiceTrack, i: number): string {
+  if (t.vowel[i] === 255) return "";
+  if (t.sure[i] < 0.5) return "?";
+  const name = t.vowelNames[t.vowel[i]];
+  return t.vowelNear[i] !== 255 ? `${name}/${t.vowelNames[t.vowelNear[i]]}` : name;
+}
+
+/** The formants measured at the playhead, for the head's F1-F3 readout (null where nothing is sung). */
+export const analyzeFormants = (): number[] | null => {
+  const n = nowFrame();
+  if (!n || !isSung(n.t, n.i)) return null;
+  const f = [n.t.formants[n.i * 3], n.t.formants[n.i * 3 + 1], n.t.formants[n.i * 3 + 2]];
+  return f.every((v) => v > 0) ? f : null;
 };
 
 const pct = (v: number) => String(Math.round(100 * v));
@@ -55,10 +69,10 @@ const pct = (v: number) => String(Math.round(100 * v));
 /** Analyze's four readouts under the chin. */
 export const analyzeSlots: SlotsFn = () => {
   const n = nowFrame();
-  const on = n && n.t.kind[n.i] === KIND.voiced && n.t.entry[n.i] >= 0;
+  const on = n && isSung(n.t, n.i);
   const t = n?.t, i = n?.i ?? 0;
   return [
-    { label: "Closure", value: on ? pct(t!.press[i]) : "-", unit: on ? "% firm" : "", color: V.white },
+    { label: "Drive", value: on ? pct(t!.press[i]) : "-", unit: on ? "%" : "", color: V.white },
     { label: "Ring", value: on ? pct(t!.ring[i]) : "-", unit: "%", color: V.pink },
     { label: "Air", value: on ? pct(t!.breath[i]) : "-", unit: "%", color: V.blue },
     { label: "Grit", value: on ? pct(t!.grit[i]) : "-", unit: "%", color: V.red },
@@ -70,9 +84,9 @@ export const analyzeInfo: InfoFn = () => {
   const n = nowFrame();
   if (!n) return ["No recording"];
   const rd = read(n.t, n.i);
-  if (rd.kind !== "voiced") return [rd.kind === "breath" ? "Breath in" : rd.kind === "noise" ? "Consonant" : "Silence"];
-  const fit = n.t.fit[n.i];
-  return [`Note ${rd.note} ${rd.hz.toFixed(0)} Hz`, `Match ${fit < 4 ? "close" : fit < 7 ? "fair" : "rough"}`];
+  if (rd.kind !== "voiced") return [rd.kind === "breath" ? "Breath in" : rd.kind === "harsh" ? "Harsh, no pitch" : rd.kind === "noise" ? "Consonant" : "Silence"];
+  // the formants above are measured; the shape drawn is one that would give them
+  return [`Note ${rd.note} ${rd.hz.toFixed(0)} Hz`, "Formants measured", n.t.sure[n.i] < 0.5 ? "Vowel unsure this high" : "Shape drawn to fit"];
 };
 
 /** re-render about 12 times a second while Analyze is open (the playhead moves outside React) */
@@ -114,19 +128,19 @@ function NowPanel() {
         <div className="an-big">
           <span className="an-big-label">Note</span>
           <b className="an-note">{on ? rd.note : "–"}</b>
-          <span className="an-big-sub">{on ? `${rd.cents >= 0 ? "+" : ""}${rd.cents} cents · ${rd.hz.toFixed(0)} Hz` : rd.kind === "breath" ? "breath in" : rd.kind === "noise" ? "consonant" : "silence"}</span>
+          <span className="an-big-sub">{on ? `${rd.cents >= 0 ? "+" : ""}${rd.cents} cents · ${rd.hz.toFixed(0)} Hz` : rd.kind === "breath" ? "breath in" : rd.kind === "harsh" ? "harsh, no pitch" : rd.kind === "noise" ? "consonant" : "silence"}</span>
         </div>
         <div className="an-big">
           <span className="an-big-label">Vowel</span>
-          <b className="an-vowel">{on && t.vowel[i] !== 255 ? t.vowelNames[t.vowel[i]] : "–"}</b>
-          <span className="an-big-sub">{on && t.vowel[i] !== 255 ? `near /${t.vowelIpa[t.vowel[i]]}/` : ""}</span>
+          <b className="an-vowel">{on && t.vowel[i] !== 255 ? vowelText(t, i) : "–"}</b>
+          <span className="an-big-sub">{on && t.vowel[i] !== 255 ? (t.sure[i] < 0.5 ? "too high to tell" : `F1 ${Math.round(t.formants[i * 3])} · F2 ${Math.round(t.formants[i * 3 + 1])}`) : ""}</span>
         </div>
       </div>
       <p className="an-words">{on ? rd.words.join(" · ") : rd.words.join(" ") || " "}</p>
-      <Meter name="Closure" value={on ? t.press[i] : null} color="var(--white)" ends={["light", "pressed"]} hint="How firmly the vocal folds close, from how fast the harmonics fall away. Left: light, head-like, falsetto. Middle: easy to firm. Right: heavy chest, then pressed." />
-      <Meter name="Ring" value={on ? t.ring[i] : null} color="var(--pink)" hint="How much of the sound is in the 3 kHz band, over what this vowel gives by itself. Twang makes it; so does a firm or pressed closure." />
-      <Meter name="Air" value={on ? t.breath[i] : null} color="var(--blue)" hint="Breathiness: a soft source with hiss between the upper harmonics." />
-      <Meter name="Grit" value={on ? t.grit[i] : null} color="var(--red)" hint="Rattle or noise between the low harmonics: rasp, growl, distortion." />
+      <Meter name="Drive" value={on ? t.press[i] : null} color="var(--white)" ends={["soft", "hard"]} hint="How hard the voice is driven: how strong the upper harmonics are against the lowest. Set on trained singers: left is their soft and breathy singing, right their belt and forte. Loudness and firm fold closure both raise it, and the sound alone cannot tell them apart." />
+      <Meter name="Ring" value={on ? t.ring[i] : null} color="var(--pink)" hint="How much of the sound is in the 2 to 4 kHz band, set on the same singers' belt against their soft singing. Twang raises it and so does driving harder: the sound alone cannot tell which. EE and EH have more of it than OO, so compare the same vowel." />
+      <Meter name="Air" value={on ? t.breath[i] : null} color="var(--blue)" hint="Breathiness: hiss between the upper harmonics and a strong first harmonic. Set on trained singers' breathy singing against their straight tone." />
+      <Meter name="Grit" value={on ? t.grit[i] : null} color="var(--red)" hint="Rattle between the low harmonics, or a second pitch under the note: rasp, growl, fry, distortion. Set on vocal fry and metal vocalists' distortion against ordinary singing. A very breathy voice can read part-way up it." />
       <p className="an-vib">{on ? (t.vibExtent[i] > 0 ? `Vibrato ${t.vibRate[i].toFixed(1)} per second, ±${Math.round(t.vibExtent[i])} cents` : "Straight tone") : " "}</p>
     </div>
   );
@@ -214,7 +228,7 @@ function Placeholder(props: { isolate: boolean }) {
         </p>
       )}
       <h3>See how a recording is sung</h3>
-      <p>Open a vocal (a stem, an a cappella, or yourself) and the head sings along with it: the pitch, the vowel shapes, how firmly the folds close, the ring, the air and the grit, moment by moment.</p>
+      <p>Open a vocal (a stem, an a cappella, or yourself) and the head sings along with it: the pitch, the vowel, how hard the voice is driven, the ring, the air and the grit, moment by moment.</p>
       <p>
         For a full track, switch on <b>Full track</b> first and the vocal is isolated from the band before it is analysed.
       </p>
@@ -224,7 +238,7 @@ function Placeholder(props: { isolate: boolean }) {
           Or try the demo
         </Chip>
       </div>
-      <p className="an-note-small">Nothing leaves this computer. What you see is an estimate from the sound alone: pitch, vibrato, ring, air and grit are measured; the tongue and jaw are the model's best-matching shape, not an X-ray; consonants are not followed.</p>
+      <p className="an-note-small">Nothing leaves this computer. Measured from the sound: pitch, vibrato, the vowel's resonances, and four scales (drive, ring, air, grit) set on recordings of singers whose technique is known. Drawn, not measured: the tongue, jaw and lips are a shape that would give those resonances, not an X-ray, and the folds are the model's. Consonants are not followed.</p>
     </div>
   );
 }
@@ -300,7 +314,7 @@ export function AnalyzeRight() {
       <Screen className="s-now" title="Right now" sub="At the playhead">
         <NowPanel />
       </Screen>
-      <Screen className="s-folds" title="Vocal folds" sub="As measured">
+      <Screen className="s-folds" title="Vocal folds" sub="The model's">
         <Stroboscope />
       </Screen>
       <Screen className="s-spec" title="Spectrum" sub="Recording and model">

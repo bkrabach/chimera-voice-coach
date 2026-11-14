@@ -19,7 +19,7 @@ interface Lane {
 const LANES: Lane[] = [
   { id: "pitch", name: "Pitch", share: 0.4, color: V.amber },
   { id: "vowel", name: "Vowel", share: 0.1, color: V.green },
-  { id: "press", name: "Closure", share: 0.11, color: V.white },
+  { id: "press", name: "Drive", share: 0.11, color: V.white },
   { id: "ring", name: "Ring", share: 0.1, color: V.pink },
   { id: "breath", name: "Air", share: 0.09, color: V.blue },
   { id: "grit", name: "Grit", share: 0.1, color: V.red },
@@ -154,14 +154,16 @@ export function Timeline(props: { view: React.MutableRefObject<TimelineView> }) 
         beam(ctx, paths[2], V.amber, 1.7, { hot: true });
         beam(ctx, paths[1], V.blue, 1.7, { hot: true });
         beam(ctx, paths[0], V.red, 1.9, { hot: true });
-        // breaths and unvoiced sounds along the bottom
-        for (let i = i0; i <= i1; i++) {
-          if (t.kind[i] !== KIND.breath || (i > i0 && t.kind[i - 1] === KIND.breath)) continue;
-          let j = i;
-          while (j < t.n && t.kind[j] === KIND.breath) j++;
-          const a = X(i * t.hop), b = X(j * t.hop);
-          seg(ctx, a, l.y1 - 3, b, l.y1 - 3, V.white, 2, { alpha: 0.8 });
-          if (b - a > 8) label(ctx, "BREATH", (a + b) / 2, l.y1 - 8, { size: 8, color: V.white, align: "center", ls: 0.12 });
+        // breaths, and harsh sounds with no pitch to draw (a scream, a growl), along the bottom
+        for (const [kind, name, color] of [[KIND.breath, "BREATH", V.white], [KIND.harsh, "HARSH", V.red]] as const) {
+          for (let i = i0; i <= i1; i++) {
+            if (t.kind[i] !== kind || (i > i0 && t.kind[i - 1] === kind)) continue;
+            let j = i;
+            while (j < t.n && t.kind[j] === kind) j++;
+            const a = X(i * t.hop), b = X(j * t.hop);
+            seg(ctx, a, l.y1 - 3, b, l.y1 - 3, color, 2, { alpha: 0.85 });
+            if (b - a > 8) label(ctx, name, (a + b) / 2, l.y1 - 8, { size: 8, color, align: "center", ls: 0.12 });
+          }
         }
         continue;
       }
@@ -177,7 +179,11 @@ export function Timeline(props: { view: React.MutableRefObject<TimelineView> }) 
           }
           let j = i;
           while (j <= i1 && t.vowel[j] === v) j++;
-          const name = t.vowelNames[v];
+          // where the pitch is too high for the formants to be read, the name is a question
+          let sure = 0;
+          for (let q = i; q < j; q++) sure += t.sure[q];
+          const unsure = sure / (j - i) < 0.5;
+          const name = unsure ? "?" : t.vowelNames[v];
           const a = X(i * t.hop), b = X(j * t.hop);
           // a tick where the vowel changes; the same vowel carried on after a consonant has none
           if (v !== lastVowel) seg(ctx, a, l.y0 + 2, a, l.y1 - 2, V.green, 1, { alpha: 0.6 });
@@ -199,7 +205,7 @@ export function Timeline(props: { view: React.MutableRefObject<TimelineView> }) 
       const p = new Path2D();
       let pen = false;
       for (let i = i0; i <= i1; i += step) {
-        const on = l.id === "level" ? t.level[i] > -70 : t.f0[i] > 0 && t.entry[i] >= 0;
+        const on = l.id === "level" ? t.level[i] > -70 : t.f0[i] > 0 && t.shape[i] >= 0;
         if (!on) {
           pen = false;
           continue;
@@ -211,10 +217,10 @@ export function Timeline(props: { view: React.MutableRefObject<TimelineView> }) 
         pen = true;
       }
       if (l.id === "press") {
-        // the middle is an easy, balanced closure: lighter below, pressed above
+        // the middle is half-way between the singers' soft singing (below) and their belt (above)
         seg(ctx, x0, Y(0.5), x1, Y(0.5), V.frame, 1, { dash: [2, 4] });
-        label(ctx, "PRESSED", x1 - 2, l.y0 + 7, { size: 7.5, color: TEXT.secondary, align: "right", ls: 0.12, alpha: 0.75 });
-        label(ctx, "LIGHT", x1 - 2, l.y1 - 1, { size: 7.5, color: TEXT.secondary, align: "right", ls: 0.12, alpha: 0.75 });
+        label(ctx, "HARD", x1 - 2, l.y0 + 7, { size: 7.5, color: TEXT.secondary, align: "right", ls: 0.12, alpha: 0.75 });
+        label(ctx, "SOFT", x1 - 2, l.y1 - 1, { size: 7.5, color: TEXT.secondary, align: "right", ls: 0.12, alpha: 0.75 });
       }
       beam(ctx, p, l.color, 1.4, { alpha: l.id === "level" ? 0.6 : 0.95 });
     }
@@ -298,7 +304,7 @@ export function Timeline(props: { view: React.MutableRefObject<TimelineView> }) 
       onPointerCancel={onUp}
       onDoubleClick={() => useAnalyze.getState().setLoop(null)}
       role="img"
-      aria-label="The recording over time: pitch, vowel, fold closure, ring, air, grit and level. Click to move the playhead, drag to loop a stretch, double-click to clear the loop."
+      aria-label="The recording over time: pitch, vowel, drive, ring, air, grit and level. Click to move the playhead, drag to loop a stretch, double-click to clear the loop."
     />
   );
 }

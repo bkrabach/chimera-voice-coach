@@ -104,7 +104,7 @@ function Takes(props: { lesson: Lesson }) {
   );
 }
 
-const MEASURE_NAME: Record<Measure, string> = { press: "Closure", ring: "Ring", breath: "Air", grit: "Grit" };
+const MEASURE_NAME: Record<Measure, string> = { press: "Drive", ring: "Ring", breath: "Air", grit: "Grit" };
 const MEASURE_COLOR: Record<Measure, string> = { press: "var(--white)", ring: "var(--pink)", breath: "var(--blue)", grit: "var(--red)" };
 const pc = (v: number | undefined) => (v === undefined ? "–" : String(Math.round(v * 100)));
 
@@ -226,7 +226,7 @@ function YouPanel(props: { lesson: Lesson }) {
               </tbody>
             </table>
           )}
-          <p className="you-small">Tick: the take. Dot: you, now. Ring: your last go. In the table, the take's own reading is in brackets. These scales were set on the synthesizer, not yet on real voices: trust the direction, and the change between your own goes, more than the numbers.</p>
+          <p className="you-small">Tick: the take. Dot: you, now. Ring: your last go. In the table, the take's own reading is in brackets. The scales are set on recordings of trained singers (see docs/validation.md), and the take is the synthesizer measured the same way. They tell techniques apart best within one voice: trust the change between your own goes more than a single number.</p>
         </>
       )}
     </section>

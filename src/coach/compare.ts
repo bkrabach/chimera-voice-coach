@@ -65,7 +65,7 @@ export class Gather {
 
   /** Add frame `i` of `t` if it is sung (voiced and matched); says whether it was. */
   push(t: VoiceTrack, i: number): boolean {
-    if (!(t.f0[i] > 0) || t.entry[i] < 0) return false;
+    if (!(t.f0[i] > 0) || t.shape[i] < 0) return false;
     this.hop = t.hop;
     this.press.push(t.press[i]);
     this.ring.push(t.ring[i]);
@@ -125,16 +125,25 @@ export function centsOff(midi: number, target: number): number {
 export const MEASURES = ["press", "ring", "breath", "grit"] as const;
 export type Measure = (typeof MEASURES)[number];
 
-/** how far apart two readings must be before it is worth saying (the scales are rough on a real voice) */
+/** how far apart two readings must be before it is worth saying */
 const GAP = 0.18;
+
+/**
+ * Below these, a reading is "none", and two readings down there are not compared. Grit 0.5 is
+ * where the scale itself says "more likely ordinary singing than fry or distortion"; trained
+ * singers' straight tone reads 0.09 in the middle and the synthesizer's clean takes up to about
+ * 0.3. Air under 0.3 is ordinary clean singing (straight tone 0.14). Only a take that has grit or
+ * air, or a singer who does, gets a word about it.
+ */
+const NONE: Partial<Record<Measure, number>> = { grit: 0.5, breath: 0.3 };
 
 const ADVICE: Record<Measure, { less: string; more: string }> = {
   press: {
-    less: "Your folds are closing more lightly than the take's. Start the note as cleanly as the catch in 'uh-oh', and keep them together.",
-    more: "You are pressing harder than the take. Same note, less squeeze: let it be easier.",
+    less: "Softer than the take: its upper harmonics are stronger. Start the note as cleanly as the catch in 'uh-oh', and keep that firmness under it.",
+    more: "Driven harder than the take. Same note, less push and less squeeze: let it be easier.",
   },
   ring: {
-    less: "Less ring than the take. Narrow the funnel just above the folds: find the bratty 'nyeah' edge and keep it.",
+    less: "Less ring than the take. Find the bratty 'nyeah' edge (the funnel just above the folds narrowing) and keep it.",
     more: "More ring than the take. Let the throat widen, toward the start of a yawn.",
   },
   breath: {
@@ -153,7 +162,7 @@ const ADVICE: Record<Measure, { less: string; more: string }> = {
  */
 export function advise(target: Summary, you: Summary, steady: boolean): string[] {
   const out: string[] = [];
-  const gaps = MEASURES.map((m) => ({ m, d: you[m] - target[m] }))
+  const gaps = MEASURES.map((m) => ({ m, d: Math.max(you[m], NONE[m] ?? 0) - Math.max(target[m], NONE[m] ?? 0) }))
     .filter((g) => Math.abs(g.d) >= GAP)
     .sort((a, b) => Math.abs(b.d) - Math.abs(a.d));
   for (const g of gaps.slice(0, 2)) out.push(g.d < 0 ? ADVICE[g.m].less : ADVICE[g.m].more);
@@ -161,6 +170,6 @@ export function advise(target: Summary, you: Summary, steady: boolean): string[]
     const c = Math.round(centsOff(you.midi, target.midi));
     if (Math.abs(c) > 30) out.push(`About ${Math.abs(c)} cents ${c < 0 ? "flat" : "sharp"} of the take's note.`);
   }
-  if (!out.length) out.push("Close to the take: closure, ring, air and grit are all within reach of it.");
+  if (!out.length) out.push("Close to the take: drive, ring, air and grit are all within reach of it.");
   return out.slice(0, 3);
 }

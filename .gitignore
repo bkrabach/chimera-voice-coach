@@ -11,3 +11,6 @@ public/shows/
 # the vocal isolator's Python environment and model weights (bun run setup:separate)
 tools/separate/.venv/
 tools/separate/.cache/
+# labelled recordings for checking Analyze (tools/data/fetch.sh): openly licensed, but not ours to republish
+/data/
+tools/eval/.venv/

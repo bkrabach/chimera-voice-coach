@@ -123,16 +123,60 @@ export interface PitchTrack {
 
 const MAX_CAND = 5;
 
+/** `x` with what lies above `cutoff` (Hz) taken out: a second-order Butterworth low-pass run forward and then backward, so nothing is delayed. */
+export function lowPass(x: Float32Array, fs: number, cutoff: number): Float32Array {
+  const k = Math.tan((Math.PI * cutoff) / fs), q = Math.SQRT1_2;
+  const norm = 1 / (1 + k / q + k * k);
+  const b0 = k * k * norm, b1 = 2 * b0, a1 = 2 * (k * k - 1) * norm, a2 = (1 - k / q + k * k) * norm;
+  const y = new Float32Array(x.length);
+  let x1 = 0, x2 = 0, y1 = 0, y2 = 0;
+  for (let i = 0; i < x.length; i++) {
+    const v = b0 * x[i] + b1 * x1 + b0 * x2 - a1 * y1 - a2 * y2;
+    x2 = x1;
+    x1 = x[i];
+    y2 = y1;
+    y1 = v;
+    y[i] = v;
+  }
+  x1 = x2 = y1 = y2 = 0;
+  for (let i = y.length - 1; i >= 0; i--) {
+    const u = y[i];
+    const v = b0 * u + b1 * x1 + b0 * x2 - a1 * y1 - a2 * y2;
+    x2 = x1;
+    x1 = u;
+    y2 = y1;
+    y1 = v;
+    y[i] = v;
+  }
+  return y;
+}
+/** seconds of signal each pitch estimate is taken over: a pitch that moves within it is averaged */
+export const PITCH_WINDOW = 0.04;
+
 /**
  * Pitch per frame. Each frame's candidates are the dips of YIN's cumulative-mean-normalised
  * difference function; a path search (Viterbi) then picks one per frame, or "unvoiced", paying
  * for pitch jumps, so a single frame cannot leap an octave on its own.
  */
-export function trackPitch(x: Float32Array, o: PitchOptions): PitchTrack {
+export function trackPitch(input: Float32Array, o: PitchOptions): PitchTrack {
   const { fs, hop } = o;
+  // Only what lies under 2 kHz is asked for its period. The upper harmonics add nothing a pitch
+  // needs, and they make the dip at the true period too narrow to find between two samples: a
+  // steady note above 330 Hz then read an octave or a twelfth low, where some multiple of its
+  // period happened to fall on a whole sample (tests/measure.test.ts keeps the case).
+  const x = lowPass(input, fs, 2000);
   const fmin = o.fmin ?? 62, fmax = o.fmax ?? 1250;
   const tauMin = Math.max(2, Math.floor(fs / fmax)), tauMax = Math.ceil(fs / fmin);
-  const W = Math.round(0.04 * fs); // integration window
+  const W = Math.round(PITCH_WINDOW * fs); // integration window
+  // What a candidate costs: how poorly the signal repeats at its period, and a little for each
+  // octave below the top. A steady note repeats as well at every multiple of its period, so the
+  // octave's price is what picks the note itself. It also decides the two cases that are the
+  // same thing seen from each side: a rasp, whose cycles differ a little so that it repeats
+  // slightly better over four of them (still the note: the price outweighs up to 3.5 % of the
+  // energy lying between its harmonics, per octave), and a note whose second harmonic towers over
+  // the first (not the octave above, unless the odd harmonics hold less than 1.75 % of the energy).
+  const HIGH_BIAS = 0.035;
+  const price = (cost: number, f: number) => cost + HIGH_BIAS * Math.log2(fmax / f);
   const N = 1 << Math.ceil(Math.log2(W + tauMax + 1));
   const fft = new FFT(N);
   const nFrames = Math.max(0, Math.floor((x.length - (W + tauMax)) / hop) + 1);
@@ -190,9 +234,11 @@ export function trackPitch(x: Float32Array, o: PitchOptions): PitchTrack {
         candC[base + n] = cost;
         n++;
       } else {
+        // full: the new one takes the place of the worst, if it is better (a steady high note has
+        // more dips than places, every multiple of its period, and the period itself must stay)
         let worst = 0;
-        for (let k = 1; k < MAX_CAND; k++) if (candC[base + k] > candC[base + worst]) worst = k;
-        if (cost < candC[base + worst]) {
+        for (let k = 1; k < MAX_CAND; k++) if (price(candC[base + k], candF[base + k]) > price(candC[base + worst], candF[base + worst])) worst = k;
+        if (price(cost, f) < price(candC[base + worst], candF[base + worst])) {
           candF[base + worst] = f;
           candC[base + worst] = cost;
         }
@@ -203,10 +249,10 @@ export function trackPitch(x: Float32Array, o: PitchOptions): PitchTrack {
 
   // path search: states 0..MAX_CAND-1 are the candidates, MAX_CAND is "unvoiced"
   const S = MAX_CAND + 1;
-  const UNVOICED_COST = 0.42, SWITCH = 0.18, JUMP = 0.9, HIGH_BIAS = 0.035;
+  const UNVOICED_COST = 0.42, SWITCH = 0.18, JUMP = 0.9;
   const acc = new Float32Array(nFrames * S).fill(Infinity);
   const back = new Int8Array(nFrames * S).fill(-1);
-  const local = (fr: number, k: number) => (k === MAX_CAND ? UNVOICED_COST : candC[fr * MAX_CAND + k] + HIGH_BIAS * Math.log2(fmax / candF[fr * MAX_CAND + k]));
+  const local = (fr: number, k: number) => (k === MAX_CAND ? UNVOICED_COST : price(candC[fr * MAX_CAND + k], candF[fr * MAX_CAND + k]));
   for (let k = 0; k < S; k++) if (k === MAX_CAND || k < candN[0]) acc[k] = local(0, k);
   for (let fr = 1; fr < nFrames; fr++) {
     for (let k = 0; k < S; k++) {
@@ -370,7 +416,35 @@ export class HarmonicAnalyser {
     this.fft.transform(re, im);
     const g = 4 / (len * len);
     for (let i = 0; i <= N / 2; i++) this.power[i] = (re[i] * re[i] + im[i] * im[i]) * g;
+    this.lastLen = len;
     return this.power;
+  }
+
+  /** the window length of the spectrum computed last (samples): it sets how wide a harmonic's peak is */
+  private lastLen = 0;
+
+  /**
+   * Noise over harmonics (dB) between `fa` and `fb` in the spectrum computed last: the energy
+   * that is not within a harmonic's own peak, against the energy that is. Everything that does
+   * not repeat with the pitch lands between the harmonics: breath noise, a subharmonic's rattle,
+   * cycles that differ. −25 dB is a clean tone; 0 dB is as much noise as tone. NaN when no
+   * harmonic falls in the band. (Meaningful on a stretch re-timed to a steady pitch: see `steady`.)
+   */
+  noiseOverHarmonics(f0: number, fa: number, fb: number): number {
+    const { N, fs, power } = this;
+    const binHz = fs / N;
+    const half = (2.2 * N) / Math.max(1, this.lastLen);
+    const b0 = Math.max(1, Math.floor(fa / binHz)), b1 = Math.min(N / 2, Math.ceil(fb / binHz));
+    let total = 0;
+    for (let b = b0; b <= b1; b++) total += power[b];
+    let harm = 0, cnt = 0;
+    for (let k = Math.max(1, Math.ceil(fa / f0)); k * f0 <= fb; k++) {
+      const c = (k * f0) / binHz;
+      for (let b = Math.max(b0, Math.ceil(c - half)); b <= Math.min(b1, Math.floor(c + half)); b++) harm += power[b];
+      cnt++;
+    }
+    if (!cnt || !(total > 0)) return NaN;
+    return 10 * Math.log10(Math.max(total - harm, total * 1e-5) / Math.max(harm, total * 1e-5));
   }
 
   /** The strongest bin within `halfWidth` Hz of `f` in the spectrum computed last (dB). */

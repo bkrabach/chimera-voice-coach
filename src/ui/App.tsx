@@ -17,7 +17,7 @@ import { CreatureView } from "./components/CreatureView.tsx";
 import { BeatboxRight, BeatOverlay, beatInfo, beatSlots } from "./components/BeatboxPanel.tsx";
 import { SingRight, singInfo, singWords } from "./components/SingPanel.tsx";
 import { CoachRight, coachInfo, coachOverlay, coachSlots } from "./components/CoachPanel.tsx";
-import { AnalyzeRight, analyzeInfo, analyzeOverlay, analyzeSlots } from "./components/AnalyzePanel.tsx";
+import { AnalyzeRight, analyzeFormants, analyzeInfo, analyzeOverlay, analyzeSlots } from "./components/AnalyzePanel.tsx";
 import type { Mode } from "./store.ts";
 import type { BodyName } from "../worklet/protocol.ts";
 import { BodyPad } from "./components/BodyPad.tsx";
@@ -133,7 +133,7 @@ function LeftScreen() {
   return (
     <Screen className="left" focus lead={bestiary ? undefined : <BodyControl />} label={bestiary ? "Live creature airway" : "Live vocal tract"} tools={<ViewToggles />}>
       <Suspense fallback={null}>
-        {bestiary ? <CreatureView /> : mode === "coach" ? <Face slots={coachSlots} info={coachInfo} overlay={coachOverlay} /> : mode === "analyze" ? <Face slots={analyzeSlots} info={analyzeInfo} overlay={analyzeOverlay} /> : mode === "speak" ? <Face slots={speechSlots} info={speechInfo} overlay={speechWords} /> : mode === "sing" ? <Face info={singInfo} overlay={singWords} /> : mode === "beatbox" ? <Face slots={beatSlots} info={beatInfo} showFormants={false} /> : <Face />}
+        {bestiary ? <CreatureView /> : mode === "coach" ? <Face slots={coachSlots} info={coachInfo} overlay={coachOverlay} /> : mode === "analyze" ? <Face slots={analyzeSlots} info={analyzeInfo} overlay={analyzeOverlay} formants={analyzeFormants} /> : mode === "speak" ? <Face slots={speechSlots} info={speechInfo} overlay={speechWords} /> : mode === "sing" ? <Face info={singInfo} overlay={singWords} /> : mode === "beatbox" ? <Face slots={beatSlots} info={beatInfo} showFormants={false} /> : <Face />}
       </Suspense>
       {mode === "beatbox" && <BeatOverlay />}
     </Screen>
