@@ -19,13 +19,13 @@ what the fork adds.
   everything to where your voice sits.
 - **Mic** (in Coach): sing a take back and see yourself beside it. While the take sings, the
   microphone waits; when it stops, your own voice drives the head, the folds and the spectrum,
-  and four scales (closure, ring, air, grit) show the take's reading, yours now and your last go,
+  and four scales (drive, ring, air, grit) show the take's reading, yours now and your last go,
   with a line or two on what to change ("Less ring than the take: narrow the funnel…", "About 40
   cents flat"). With **Loop** on, the take and you alternate; with **Compare all**, you answer
   each take in turn, and a table keeps your go at every take, so you can see whether your "no
   twang" and your "twang" differ the way the takes do. Nothing is recorded or sent anywhere.
 - **Analyze**: open a recording (a vocal stem, an a cappella, yourself) and the head sings along
-  with it. A timeline shows the pitch, the vowel, how firmly the folds close, the ring, the air,
+  with it. A timeline shows the pitch, the vowel, how hard the voice is driven, the ring, the air,
   the grit and the level; click to move, drag to loop a phrase, slow it to 75 or 50 % at pitch,
   and fade between the recording and the synthesizer singing what was measured. **Demo** analyses
   the synthesizer singing Coach's own takes, whose settings are known, so the lanes can be read
@@ -39,23 +39,31 @@ what the fork adds.
 - The engine's voice gains **distortion** (`VoiceSource.distortion`): irregular fold cycles, from
   a subharmonic rattle to noise. At 0 the voice is bit-identical to upstream's.
 
-### What Analyze measures, and what it guesses
+### What Analyze measures, and what it only draws
 
-It works from the sound alone ([docs/voice-coach.md](docs/voice-coach.md) has the method):
+It works from the sound alone. [docs/validation.md](docs/validation.md) has how each reading was
+checked on real singers and how far off it can be; [docs/datasets.md](docs/datasets.md) lists the
+openly licensed recordings used (none are in this repository).
 
-- **Measured**: pitch, vibrato (rate and extent), level, the ring (energy at 2.4-3.8 kHz over what
-  the vowel gives by itself), how fast the harmonics fall away (which is how firmly the folds
-  close: light, easy, firm, heavy, pressed), noise between the upper harmonics (air), and rattle
-  or noise between the lower ones (grit).
-- **Inferred**: the tongue, jaw, lips and larynx are the model's best-matching shape for the
-  harmonics heard. Many shapes sound nearly alike and a real throat is not the model's: read it
-  as "a shape that makes this vowel", not an X-ray.
-- **Not followed**: consonants, nasality, and which of twang or pressing made the ring.
-- The scales were set on the synthesizer's own singing (`bun tools/analyze-calibrate.ts`,
-  `tests/analyze.test.ts`). **They have not yet been checked against real recordings or a real
-  microphone**; treat the numbers as more-or-less within one recording rather than absolute. For
-  the same reason, trust the Mic's direction ("less ring than the take") and the change between
-  your own goes more than its numbers.
+- **Measured, and checked**: pitch (3.8 cents from the annotators' own measurement over 29,000
+  sung notes; 96 % within 50 cents), vibrato (rate within 0.1 per second and extent within 10 % on
+  tones with a set vibrato), level, and the vowel's resonances F1 and F2 (within about 4 % for F1
+  on low notes, 9 % up to 350 Hz, 15 % by 440 Hz: the higher the note, the rougher).
+- **Named from the measurement**: the vowel, as EE, EH, AH, OH or OO, by where trained singers
+  put each. Right three times in four; OH is the weak one (heard as AH or OO half the time).
+  "AH/OH" means it lies between; "?" means the note is too high to tell (above about 550 Hz).
+- **Scales fitted to real singing**: drive, ring, air and grit are each fitted to recordings of
+  20 trained singers and 27 metal vocalists whose technique is known, and scored with the singer
+  left out: air tells breathy from straight tone 89 % of the time, drive tells belt and forte
+  from soft singing 82 %, ring 79 %, grit tells fry and distortion from ordinary singing 96 %.
+  Within one voice they do better (88 to 100 %): compare a singer with themself first.
+- **Drawn, not measured**: the tongue, jaw and lips are a shape of the model that gives the
+  measured F1 and F2 (a picture of the vowel, not an X-ray of the singer); the folds are the
+  model's, driven to read the same on the scales; the twang funnel narrows with the ring and the
+  false folds close in with the grit because that is how the model makes those sounds.
+- **Not read at all**: consonants, nasality, larynx height, chest or head register, and whether
+  twang or simply driving harder made the ring. Drive is not fold closure: both loudness and
+  firmer closure raise it (against a laryngograph it follows real fold contact only weakly).
 
 ### Run it
 
@@ -155,6 +163,9 @@ bun tools/musicxml-to-notes.ts score.mxl P1 --out p1.json   # a score's part →
 - [docs/russian.md](docs/russian.md): how Russian text is read, and what is approximate.
 - [docs/hill-climb/](docs/hill-climb/): the rules and log for tuning the voice one measured
   step at a time.
+- [docs/voice-coach.md](docs/voice-coach.md): how Coach, the microphone and Analyze work.
+- [docs/validation.md](docs/validation.md): how right Analyze is, checked on real singers, and
+  [docs/datasets.md](docs/datasets.md): the open recordings that was done with, and their credits.
 
 Contributing: see [CONTRIBUTING.md](CONTRIBUTING.md). Agents: see [AGENTS.md](AGENTS.md).
 

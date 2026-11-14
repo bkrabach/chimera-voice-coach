@@ -28,11 +28,13 @@ never pushed to) that adds Coach and Analyze for a singer. See the README.
 - `src/coach/`: the lessons (`lessons.ts`: words and engine settings), the demo player, the
   callouts drawn on the head, the microphone (`mic.ts`: the singer's live voice; `compare.ts`:
   a go beside a take). `src/analyze/`: a recording → what was sung (`dsp.ts` pitch and
-  harmonics, `codebook.ts` the shapes matched against, `analyze.ts` the match, `interpret.ts` the
-  0..1 scales, `store.ts` playback and driving the engine, `worker.ts`). `tools/separate/`: the
+  harmonics, `formants.ts` and `vowels.ts` the resonances and the vowel named from them,
+  `analyze.ts` the measuring, `interpret.ts` the 0..1 scales, `codebook.ts` the shapes drawn,
+  `store.ts` playback and driving the engine, `worker.ts`). `tools/separate/`: the
   vocal isolator (Demucs) and the dev server's `/api/separate`.
 - `tests/`: bun tests on the wasm build. `tools/`: e2e, layout lint, spectrogram, speech judges
-  (`asr/` Whisper, `tsp/` the real speakers' data).
+  (`asr/` Whisper, `tsp/` the real speakers' data), and Analyze's evaluation on real singers
+  (`data/fetch.sh` the open datasets, `eval/` the scripts; `eval/run.sh` runs them all).
 - `docs/`: architecture, the engine contract (`rust-engine.md`), the UI look, the singer and
   speech judges, the hill-climb rules, and how a language plugs in (`language-front-ends.md`).
 
@@ -61,10 +63,25 @@ never pushed to) that adds Coach and Analyze for a singer. See the README.
   anything derived from it.
 - **Voice tuning follows `docs/hill-climb/README.md`** and never edits its judges.
 - **A lesson's take must do what its words say.** Its numbers were chosen by rendering and
-  measuring it; after changing one, `bun tools/analyze-calibrate.ts` and `bun test tests/coach.test.ts`.
-- **Analyze's scales (`src/analyze/interpret.ts`) are calibrated on the engine's own singing,**
-  not yet on real recordings: say so wherever a number is shown as fact. After touching
-  `src/analyze/`, `bun test tests/analyze.test.ts` and read the table from `bun tools/analyze-calibrate.ts`.
+  measuring it; after changing one, read `bun tools/coach-takes.ts` (what Analyze reads on every
+  take) and run `bun test tests/coach.test.ts tests/compare.test.ts`.
+- **Analyze's scales are fitted to real, labelled singing,** by `tools/eval/fit.py`, which writes
+  `src/analyze/scales.generated.json` (regenerate, never edit). After touching what
+  `src/analyze/` measures: `tools/eval/run.sh --write`, then update the numbers in
+  `docs/validation.md` from its output, then `bun tools/coach-takes.ts` and
+  `bun test tests/measure.test.ts tests/analyze.test.ts tests/compare.test.ts`. A change that
+  only looks better on the synthesizer or on made-up signals is not an improvement: a formant fit
+  that was three times closer on pulse-train vowels named real singers' vowels worse
+  (docs/validation.md has it).
+- **Say what is measured and what is drawn.** The pitch, vibrato, formants and scales are
+  measured and checked; the mouth shape and the folds shown are the model's. Do not show a
+  reading nothing has checked (larynx height, register and nasality were dropped for that), and
+  do not word a scale as more than it is (drive is not fold closure).
+- **Evaluation audio is openly licensed and never in git.** `data/` is ignored. A new dataset
+  goes in `tools/data/fetch.sh` and `docs/datasets.md` with its license, checked on its own page;
+  nothing non-commercial, nothing from released songs.
+- **A steady high note must not read an octave off.** The true period was once dropped from the
+  pitch tracker's shortlist of candidates; `tests/measure.test.ts` keeps notes from 110 to 1047 Hz.
 - **A measurement must survive a moving pitch.** Vibrato read as grit until each window was
   re-timed to a steady pitch (`HarmonicAnalyser.steady`); the test's vibrato case keeps it so.
 - **The microphone must never hear the speakers as the singer.** It waits while a take sings and
@@ -82,4 +99,5 @@ never pushed to) that adds Coach and Analyze for a singer. See the README.
 | `crates/chimera/` sound | re-bless goldens (above); `cargo run --release -q -p chimera --example bench` against the previous commit |
 | `crates/chimera-wasm/`, `src/wasm/`, `src/worklet/`, `src/main.tsx` | `bun run build && bun run preview`, then `bun tools/e2e.ts` |
 | `src/ui/`, `src/show/`, CSS | `bun run lint:layout` |
-| `src/coach/`, `src/analyze/` | `bun test tests/coach.test.ts tests/analyze.test.ts tests/compare.test.ts`; `bun tools/layout-lint.ts --mode coach` and `--mode analyze` |
+| `src/coach/`, `src/analyze/` | `bun test tests/coach.test.ts tests/analyze.test.ts tests/compare.test.ts tests/measure.test.ts`; `bun tools/coach-takes.ts`; `bun tools/layout-lint.ts --mode coach` and `--mode analyze` |
+| what `src/analyze/` measures | also `tools/eval/run.sh --write` (needs `tools/data/fetch.sh` once), and `docs/validation.md` |
