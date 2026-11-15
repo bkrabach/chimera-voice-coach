@@ -85,6 +85,9 @@ never pushed to) that adds Coach and Analyze for a singer. See the README.
   is short, `data/` can go except `data/eval/` (the 40-minute Praat pass), and so can
   `target/debug`; `fetch.sh` and `cargo` bring them back. Check: `ls data/*.zip
   data/emvd/*.tar.xz` finds nothing.
+- **The dev server watches only source.** A big folder that is not source (datasets, build
+  output, a Python environment) goes in `unwatched` in `vite.config.ts`: with `data/` watched, a
+  running dev server stopped answering when the datasets were unpacked and deleted under it.
 - **A steady high note must not read an octave off.** The true period was once dropped from the
   pitch tracker's shortlist of candidates; `tests/measure.test.ts` keeps notes from 110 to 1047 Hz.
 - **A measurement must survive a moving pitch.** Vibrato read as grit until each window was
