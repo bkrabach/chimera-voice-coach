@@ -212,7 +212,7 @@ answering in real time) has not been tried.
 ## Running it
 
 ```sh
-tools/data/fetch.sh                      # the recordings: 6.5 GB under data/ (git-ignored)
+tools/data/fetch.sh                      # the recordings: 5.5 GB under data/ (git-ignored)
 python3 -m venv tools/eval/.venv && tools/eval/.venv/bin/pip install -r tools/eval/requirements.txt
 tools/eval/run.sh                        # everything above; add --write to refit the scales
 bun tools/eval/formant-truth.ts          # the formant table

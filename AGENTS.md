@@ -80,6 +80,11 @@ never pushed to) that adds Coach and Analyze for a singer. See the README.
 - **Evaluation audio is openly licensed and never in git.** `data/` is ignored. A new dataset
   goes in `tools/data/fetch.sh` and `docs/datasets.md` with its license, checked on its own page;
   nothing non-commercial, nothing from released songs.
+- **Downloads are on disk once.** `fetch.sh` deletes each archive as soon as it is unpacked (the
+  archives were once 3.5 GB of 8.8 GB left behind). When an evaluation is finished and the disk
+  is short, `data/` can go except `data/eval/` (the 40-minute Praat pass), and so can
+  `target/debug`; `fetch.sh` and `cargo` bring them back. Check: `ls data/*.zip
+  data/emvd/*.tar.xz` finds nothing.
 - **A steady high note must not read an octave off.** The true period was once dropped from the
   pitch tracker's shortlist of candidates; `tests/measure.test.ts` keeps notes from 110 to 1047 Hz.
 - **A measurement must survive a moving pitch.** Vibrato read as grit until each window was

@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Real singing and speech with known labels, for checking and tuning Analyze (docs/datasets.md has
 # what each is used for). Everything here is openly licensed; none of it goes in git: it lands in
-# data/ (git-ignored). About 6.5 GB with the archives.
+# data/ (git-ignored). 5.5 GB once unpacked; it needs about 6.5 GB free while it runs. When the
+# evaluation is done and the disk is short, everything in data/ but data/eval/ can be deleted
+# (data/eval/ holds the 40-minute Praat pass) and this script brings it back.
 #
 #   VocalSet                CC BY 4.0   https://doi.org/10.5281/zenodo.1442513
 #     Wilkins, Seetharaman, Wahl & Pardo, "VocalSet: A Singing Voice Dataset", ISMIR 2018.
@@ -28,20 +30,33 @@ get() { # url, destination
   echo "fetching $2"
   curl -L --fail --retry 3 -C - -o "$2.part" "$1" && mv "$2.part" "$2"
 }
+# An archive is deleted as soon as it is unpacked, so the recordings are on disk once, not twice
+# (the archives were 3.5 GB of the 8.8 GB this once left behind). The folder is named only when
+# the unpacking finished, so a folder that is there is whole and nothing is fetched for it again.
+unpack() { # url, archive, folder, then the command that unpacks the archive into "<folder>.part"
+  local url="$1" archive="$2" dir="$3"; shift 3
+  [ -d "$dir" ] && { echo "have $dir"; return; }
+  get "$url" "$archive"
+  rm -rf "$dir.part"
+  mkdir -p "$dir.part"
+  "$@"
+  mv "$dir.part" "$dir"
+  rm "$archive"
+}
 
 if has vocalset; then
-  get "https://zenodo.org/records/1442513/files/VocalSet11.zip?download=1" data/VocalSet11.zip
-  [ -d data/vocalset ] || { mkdir -p data/vocalset && unzip -q -o data/VocalSet11.zip -d data/vocalset; }
+  unpack "https://zenodo.org/records/1442513/files/VocalSet11.zip?download=1" data/VocalSet11.zip data/vocalset \
+    unzip -q -o data/VocalSet11.zip -d data/vocalset.part
 fi
 if has annotated; then
-  get "https://zenodo.org/records/7061507/files/Annotated%20VocalSet.zip?download=1" data/AnnotatedVocalSet.zip
-  [ -d data/vocalset-annotated ] || { mkdir -p data/vocalset-annotated && unzip -q -o data/AnnotatedVocalSet.zip -d data/vocalset-annotated; }
+  unpack "https://zenodo.org/records/7061507/files/Annotated%20VocalSet.zip?download=1" data/AnnotatedVocalSet.zip data/vocalset-annotated \
+    unzip -q -o data/AnnotatedVocalSet.zip -d data/vocalset-annotated.part
 fi
 if has emvd; then
   mkdir -p data/emvd
   for f in metadata_files.csv metadata_singers.csv split_kfolds.csv; do get "https://zenodo.org/records/17813678/files/$f?download=1" "data/emvd/$f"; done
-  get "https://zenodo.org/records/17813678/files/audio.tar.xz?download=1" data/emvd/audio.tar.xz
-  [ -d data/emvd/audio ] || tar -xJf data/emvd/audio.tar.xz -C data/emvd
+  unpack "https://zenodo.org/records/17813678/files/audio.tar.xz?download=1" data/emvd/audio.tar.xz data/emvd/audio \
+    tar -xJf data/emvd/audio.tar.xz -C data/emvd/audio.part --strip-components=1
 fi
 if has ptdb; then
   # four speakers (two women, two men), the first 60 sentences of each: microphone, laryngograph, reference pitch
