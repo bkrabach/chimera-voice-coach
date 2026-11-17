@@ -67,6 +67,10 @@ openly licensed recordings used (none are in this repository).
 
 ### Run it
 
+Open <https://bkrabach.github.io/chimera-voice-coach/>: Coach, Mic and Analyze of a vocal on its
+own run in the browser, and the audio never leaves it. Splitting a full track into vocal and band
+does not run there (it needs Python and Demucs); for that, run it on your own machine:
+
 ```sh
 bun install
 bun run dev              # builds the wasm, then http://127.0.0.1:5317
@@ -135,7 +139,8 @@ bun run test       # wasm build, cargo test --workspace, bun test tests
 ```
 
 The AudioWorklet needs a secure context, so open it on localhost or over HTTPS (for example
-`tailscale serve`). Vercel builds it with `vercel.json`.
+`tailscale serve`). Vercel builds it with `vercel.json`; GitHub Pages builds this fork with
+`.github/workflows/pages.yml`.
 
 Offline renders and measurement:
 

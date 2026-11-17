@@ -81,8 +81,9 @@ export class EnglishG2P {
     return this.isLoaded;
   }
 
-  /** Load the gzipped dictionary ("word\tPHONES" lines). */
-  load(url = "/data/cmudict.txt.gz"): Promise<void> {
+  /** Load the gzipped dictionary ("word\tPHONES" lines). From the site's base, not "/": GitHub
+   *  Pages serves the app under /<repo>/, where "/data/…" is another site's and the words go silent. */
+  load(url = `${import.meta.env.BASE_URL}data/cmudict.txt.gz`): Promise<void> {
     if (this.isLoaded) return Promise.resolve();
     if (this.loading) return this.loading;
     this.loading = (async () => {

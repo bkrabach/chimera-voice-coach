@@ -37,6 +37,9 @@ never pushed to) that adds Coach and Analyze for a singer. See the README.
   (`data/fetch.sh` the open datasets, `eval/` the scripts; `eval/run.sh` runs them all).
 - `docs/`: architecture, the engine contract (`rust-engine.md`), the UI look, the singer and
   speech judges, the hill-climb rules, and how a language plugs in (`language-front-ends.md`).
+- `.github/workflows/pages.yml`: builds the app and publishes it to GitHub Pages on each push to
+  `main`. The site has no isolator: `/api/separate` answers 404 there, which turns Analyze's
+  full-track switch off.
 
 ## Rules
 
@@ -88,6 +91,16 @@ never pushed to) that adds Coach and Analyze for a singer. See the README.
 - **The dev server watches only source.** A big folder that is not source (datasets, build
   output, a Python environment) goes in `unwatched` in `vite.config.ts`: with `data/` watched, a
   running dev server stopped answering when the datasets were unpacked and deleted under it.
+- **The site is served under a path.** GitHub Pages serves it at `/chimera-voice-coach/`, so a
+  path the page asks for at run time starts from `import.meta.env.BASE_URL`, never from `/`: the
+  dictionary was `/data/…`, which there is another site's, and Sing and Speak would have had no
+  words. Vite rewrites imports and CSS `url()` by itself. The workflow fails the build on such a
+  path; to check by hand, `bun run build --base /x/`, serve `dist` as `/x/`, then
+  `bun tools/e2e.ts http://127.0.0.1:<port>/x/`.
+- **`bun.lock` is lockfile version 2** (upstream's Bun 1.4). Bun 1.3 cannot read it: it ignores
+  it, `bun install --frozen-lockfile` fails, and a plain `bun install` rewrites it in the old
+  format (do not commit that). The Pages workflow pins its Bun; keep the pin at a version that
+  reads the lockfile.
 - **A steady high note must not read an octave off.** The true period was once dropped from the
   pitch tracker's shortlist of candidates; `tests/measure.test.ts` keeps notes from 110 to 1047 Hz.
 - **A measurement must survive a moving pitch.** Vibrato read as grit until each window was
